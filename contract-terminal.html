@@ -687,8 +687,7 @@ function fetchHistoricalKlines(symbol, interval) {
       if (rows.length === 0) { clearTimeout(fetchTimeout); pendingFetchCount--; return; }
       if (!ohlcvCache[symbol]) ohlcvCache[symbol] = {};
       ohlcvCache[symbol][interval] = rows.map(function(r) {
-        // OKX: [ts(ms), o, h, l, c, vol, volCcy, ...]
-        return { time: parseInt(r[0]) / 1000, open: parseFloat(r[1]), high: parseFloat(r[2]), low: parseFloat(r[3]), close: parseFloat(r[4]), volume: parseFloat(r[5]) };
+        return { time: r.time, open: r.open, high: r.high, low: r.low, close: r.close, volume: r.volume };
       });
       recalculateForSymbol(symbol, interval);
       pendingFetchCount--;
