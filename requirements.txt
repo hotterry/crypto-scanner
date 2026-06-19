@@ -1,0 +1,2 @@
+# Python standard library only — no external deps needed.
+# Listed for Railway build detection.

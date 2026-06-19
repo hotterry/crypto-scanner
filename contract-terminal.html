@@ -547,8 +547,15 @@ function startWebSocket() {
 // ── Local proxy-based data polling (replaces WebSocket) ──
 var _proxyBase = (function() {
   var host = window.location.hostname || '127.0.0.1';
-  // Always use the comboserver proxy port, regardless of which port serves the HTML
-  return 'http://' + host + ':9878';
+  var port = window.location.port;
+  // On Railway (or any non-localhost deployment), API is on same host+port as the page
+  // On localhost, the API is always on port 9878 (comboserver)
+  if (host === 'localhost' || host === '127.0.0.1') {
+    return 'http://' + host + ':9878';
+  }
+  // Production: API endpoints are on the same origin
+  var proto = window.location.protocol;
+  return proto + '//' + host + (port ? ':' + port : '');
 })();
 var _tickerInterval = null;
 var _tickerFailures = 0;

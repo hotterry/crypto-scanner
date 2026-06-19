@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """
 Combined HTTP server: serves static files AND proxies OKX API data.
-Port 9878 — serves contract-terminal.html from 交易策略 directory.
+Deployable on Railway or any PaaS.
+
+Local:  python3 comboserver.py
+Railway: detected automatically via PORT env var.
 """
 
 import http.server
@@ -13,8 +16,10 @@ import threading
 import time
 import os
 
-PORT = 9878
-SERVE_DIR = '/Users/terry/Documents/交易策略'
+# Railway sets PORT env var; use 9878 locally
+PORT = int(os.environ.get('PORT', 9878))
+# Bind to 0.0.0.0 for Railway, 127.0.0.1 for local
+BIND_HOST = '0.0.0.0' if os.environ.get('RAILWAY_ENVIRONMENT') else '127.0.0.1'
 
 COINS = ['BTCUSDT','ETHUSDT','SOLUSDT','DOGEUSDT','BNBUSDT','AVAXUSDT','LINKUSDT','ARBUSDT']
 INST_IDS = [c.replace('USDT', '-USDT-SWAP') for c in COINS]
@@ -61,7 +66,6 @@ class ComboHandler(http.server.BaseHTTPRequestHandler):
         path = parsed.path
         query = urllib.parse.parse_qs(parsed.query)
 
-        # API endpoints
         if path == '/api/okx/tickers':
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
@@ -97,10 +101,11 @@ class ComboHandler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(b'{"pong":true,"tickers":' + str(len(ticker_cache)).encode() + b'}')
             return
 
-        # Serve static files
-        file_path = os.path.join(SERVE_DIR, path.lstrip('/'))
-        if not file_path or not os.path.exists(file_path):
-            file_path = os.path.join(SERVE_DIR, 'contract-terminal.html')
+        # Serve static files from script directory
+        serve_dir = os.path.dirname(os.path.abspath(__file__))
+        file_path = os.path.join(serve_dir, path.lstrip('/'))
+        if not file_path or path == '/' or not os.path.exists(file_path):
+            file_path = os.path.join(serve_dir, 'contract-terminal.html')
         try:
             with open(file_path, 'rb') as f:
                 content = f.read()
@@ -140,10 +145,10 @@ def fetch_candles(inst_id, bar='1H', limit=300):
     return fetch_json(url)
 
 if __name__ == '__main__':
-    print(f"[server] Serving {SERVE_DIR} on port {PORT}", flush=True)
+    print(f"[server] Serving on {BIND_HOST}:{PORT}", flush=True)
     fetch_all_tickers()
     threading.Thread(target=ticker_refresh_loop, daemon=True).start()
 
-    server = http.server.HTTPServer(('127.0.0.1', PORT), ComboHandler)
-    print(f"[server] http://127.0.0.1:{PORT}/contract-terminal.html", flush=True)
+    server = http.server.HTTPServer((BIND_HOST, PORT), ComboHandler)
+    print(f"[server] http://{BIND_HOST}:{PORT}/contract-terminal.html", flush=True)
     server.serve_forever()
