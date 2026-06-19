@@ -42,6 +42,7 @@ sse_clients = []
 sse_lock = threading.Lock()
 
 SIGNAL_FILE = os.path.join(SERVE_DIR, 'signals.json')
+KEYS_FILE = os.path.join(SERVE_DIR, "notified_keys.json")
 CANDLE_FILE = os.path.join(SERVE_DIR, 'candles_cache.json')
 
 # ── HTTP helpers ──
@@ -446,6 +447,11 @@ def save_state():
     except:
         pass
     try:
+        with open(KEYS_FILE, 'w') as f:
+            json.dump(list(notified_keys), f)
+    except:
+        pass
+    try:
         cd = {}
         for coin, intervals in candle_cache.items():
             cd[coin] = {}
@@ -464,6 +470,13 @@ def load_state():
             for s in signal_log:
                 key = f"{s['coin']}_{s['strategy']}_{s['type']}_{s.get('time',0)}"
                 notified_keys.add(key)
+    except:
+        pass
+    try:
+        with open(KEYS_FILE) as f:
+            for k in json.load(f):
+                notified_keys.add(k)
+        print(f"[init] loaded {len(notified_keys)} notified keys", flush=True)
     except:
         pass
     try:

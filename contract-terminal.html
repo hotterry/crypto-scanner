@@ -1796,6 +1796,7 @@ function init(){
         data.forEach(function(s) {
           var key = (s.coin||'') + '_' + (s.strategy||'') + '_' + (s.type||'') + '_' + (s.time||0);
           notifiedSignals.add(key);
+          markSignalNotified(key);
         });
         updateLatestSignals(); updateSignalLog();
       }
@@ -1866,7 +1867,6 @@ function connectSSE(apiBase) {
     try {
       var msg = JSON.parse(event.data);
       if (msg.type === 'init') {
-        // Full state refresh
         if (msg.priceData) priceData = msg.priceData;
         if (msg.signalLog && msg.signalLog.length > 0) {
           signalLog = msg.signalLog;
@@ -1877,11 +1877,11 @@ function connectSSE(apiBase) {
         }
         updateMarketCards(); updateCoinTable(); updateLatestSignals(); drawPriceChart();
       } else if (msg.type === 'signal') {
-        // New signal!
         var s = msg.data;
         var key = s.coin + '_' + s.strategy + '_' + s.type + '_' + (s.time||0);
-        if (!notifiedSignals.has(key)) {
+        if (!notifiedSignals.has(key) && !isSignalNotifiedBefore(key)) {
           notifiedSignals.add(key);
+          markSignalNotified(key);
           signalLog = [s].concat(signalLog).slice(0, 200);
           enqueueAlert(s);
           updateMarketCards(); updateCoinTable(); updateLatestSignals();
@@ -1893,6 +1893,27 @@ function connectSSE(apiBase) {
   es.onerror = function() {
     console.log('SSE disconnected, will retry...');
   };
+}
+
+// ── localStorage-backed signal dedup (survives Railway redeploys) ──
+function isSignalNotifiedBefore(key) {
+  try {
+    var seen = JSON.parse(localStorage.getItem('contract_seen_signals') || '{}');
+    return !!seen[key];
+  } catch(e) { return false; }
+}
+function markSignalNotified(key) {
+  try {
+    var seen = JSON.parse(localStorage.getItem('contract_seen_signals') || '{}');
+    seen[key] = Date.now();
+    // Keep last 500 keys only
+    var keys = Object.keys(seen);
+    if (keys.length > 500) {
+      var sorted = keys.sort(function(a,b) { return seen[a] - seen[b]; });
+      sorted.slice(0, keys.length - 500).forEach(function(k) { delete seen[k]; });
+    }
+    localStorage.setItem('contract_seen_signals', JSON.stringify(seen));
+  } catch(e) {}
 }
 init();
 </script>
