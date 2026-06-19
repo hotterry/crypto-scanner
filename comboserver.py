@@ -316,89 +316,93 @@ def compute_sltp(entry, side, candles):
 def analyze_all():
     global price_data
     for coin in COINS:
-        bars = candle_cache.get(coin, {}).get('1h', [])
-        if len(bars) < 30:
-            continue
-        # Update close from ticker
         inst = coin.replace('USDT', '-USDT-SWAP')
         with ticker_lock:
             ticker = ticker_cache.get(inst, {})
-        if ticker:
-            try:
-                live = float(ticker.get('last', 0))
-                if live > 0:
-                    bars[-1]['close'] = live
-                    bars[-1]['high'] = max(bars[-1]['high'], live)
-                    bars[-1]['low'] = min(bars[-1]['low'], live)
-            except (ValueError, TypeError):
-                pass
+        if not ticker:
+            continue
 
-        closes = [b['close'] for b in bars]
-        _, bb_upper, bb_lower = bollinger(closes)
-        rsi_vals = rsi(closes)
-        ml_val, sl_val, hist_val = macd(closes)
-        ema50 = ema(closes, 50)
-        ema200 = ema(closes, 200)
-        i = len(bars) - 1
-        p = closes[i]
-
-        # BB position
-        bb_pct = 50
-        bb_pos = '中性'
-        if bb_lower[i] and bb_upper[i]:
-            bb_pct = (p - bb_lower[i])/(bb_upper[i]-bb_lower[i])*100
-            bb_pos = '🟢超卖' if bb_pct<5 else '🔴超买' if bb_pct>95 else '🟢偏低' if bb_pct<20 else '🔴偏高' if bb_pct>80 else '⚪中轨'
-
-        rsi_val = rsi_vals[i]
-        macd_signal = '⚪'
-        if hist_val[i] and hist_val[i-1]:
-            macd_signal = '🟢' if hist_val[i]>0 and hist_val[i]>hist_val[i-1] else '🔴' if hist_val[i]<0 and hist_val[i]<hist_val[i-1] else '⚪'
-
-        ema_sig = '⚪'
-        if ema50[i] and ema200[i]:
-            ema_sig = '🟢多头' if ema50[i] > ema200[i] else '🔴空头'
+        # Get live price from ticker (always available)
+        try:
+            live_price = float(ticker.get('last', 0))
+            if live_price <= 0:
+                continue
+        except (ValueError, TypeError):
+            continue
 
         # 24h change from ticker
         ch24h = 0
         try:
             open24h = float(ticker.get('open24h', 0))
             if open24h > 0:
-                ch24h = (p - open24h)/open24h*100
-        except (ValueError, TypeError):
+                ch24h = (live_price - open24h)/open24h*100
+        except:
             pass
 
-        # Live price from ticker
-        live_price = p
-        try:
-            lp = float(ticker.get('last', 0))
-            if lp > 0:
-                live_price = lp
-        except (ValueError, TypeError):
-            pass
+        # Candle data for indicators (may be empty on first run)
+        bars = candle_cache.get(coin, {}).get('1h', [])
+        has_indicators = len(bars) >= 30
 
-        # Signals
-        sigs = detect_signals(coin, bars)
+        sigs = []
+        rsi_str = '—'
+        bb_pos = '加载中'
+        bb_pct = 50
+        macd_signal = '⚪'
+        ema_sig = '⚪'
+
+        if has_indicators:
+            # Update close from ticker
+            bars[-1]['close'] = live_price
+            bars[-1]['high'] = max(bars[-1]['high'], live_price)
+            bars[-1]['low'] = min(bars[-1]['low'], live_price)
+
+            closes = [b['close'] for b in bars]
+            _, bb_upper, bb_lower = bollinger(closes)
+            rsi_vals = rsi(closes)
+            ml_val, sl_val, hist_val = macd(closes)
+            ema50_arr = ema(closes, 50)
+            ema200_arr = ema(closes, 200)
+            i = len(bars) - 1
+            p = closes[i]
+
+            if bb_lower[i] and bb_upper[i]:
+                bb_pct = (p - bb_lower[i])/(bb_upper[i]-bb_lower[i])*100
+                bb_pos = '🟢超卖' if bb_pct<5 else '🔴超买' if bb_pct>95 else '🟢偏低' if bb_pct<20 else '🔴偏高' if bb_pct>80 else '⚪中轨'
+
+            rv = rsi_vals[i]
+            if rv is not None:
+                rsi_str = f'{rv:.1f}'
+
+            if hist_val[i] and hist_val[i-1]:
+                macd_signal = '🟢' if hist_val[i]>0 and hist_val[i]>hist_val[i-1] else '🔴' if hist_val[i]<0 and hist_val[i]<hist_val[i-1] else '⚪'
+
+            if ema50_arr[i] and ema200_arr[i]:
+                ema_sig = '🟢多头' if ema50_arr[i] > ema200_arr[i] else '🔴空头'
+
+            sigs = detect_signals(coin, bars)
 
         price_data[coin] = {
             'price': live_price, 'change24h': ch24h,
-            'rsiVal': f'{rsi_val:.1f}' if rsi_val else '—',
-            'bbPos': bb_pos, 'bbPct': bb_pct,
+            'rsiVal': rsi_str, 'bbPos': bb_pos, 'bbPct': bb_pct,
             'macdSignal': macd_signal, 'emaSig': ema_sig,
-            'allSignals': sigs, 'ohlcv': bars, 'lastInterval': '1h'
+            'allSignals': sigs,
+            'ohlcv': bars if has_indicators else [],
+            'lastInterval': '1h'
         }
 
         # New signal detection
-        now = time.time()
-        for s in sigs:
-            key = f"{coin}_{s['strategy']}_{s['type']}_{s['time']}"
-            if key not in notified_keys and now - s['time'] <= 4*3600:
-                notified_keys.add(key)
-                s['discoveredAt'] = now
-                s['coin'] = coin
-                with signal_lock:
-                    signal_log.insert(0, s)
-                    signal_log = signal_log[:200]
-                broadcast_signal(s)
+        if has_indicators:
+            now = time.time()
+            for s in sigs:
+                key = f"{coin}_{s['strategy']}_{s['type']}_{s['time']}"
+                if key not in notified_keys and now - s['time'] <= 4*3600:
+                    notified_keys.add(key)
+                    s['discoveredAt'] = now
+                    s['coin'] = coin
+                    with signal_lock:
+                        signal_log.insert(0, s)
+                        signal_log = signal_log[:200]
+                    broadcast_signal(s)
 
     # Persist
     save_state()
