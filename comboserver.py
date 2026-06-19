@@ -301,15 +301,22 @@ def compute_sltp(entry, side, candles):
         tp3 = bb_lower[-1] if bb_lower[-1] else entry - risk*3
 
     risk_val = abs(entry - sl)
+
+    # Precision based on price magnitude
+    def fmt_p(v):
+        if abs(v) < 1: return round(v, 6)
+        if abs(v) < 100: return round(v, 3)
+        return round(v, 2)
+
     return {
-        'sl': round(sl, 2), 'slPct': round(risk_val/entry*100, 2),
-        'tp1': round(tp1, 2), 'tp1Pct': round(abs(tp1-entry)/entry*100, 2),
-        'tp2': round(tp2, 2), 'tp2Pct': round(abs(tp1-entry)/entry*100, 2),
-        'tp3': round(tp3, 2), 'tp3Pct': round(abs(tp3-entry)/entry*100, 2),
+        'sl': fmt_p(sl), 'slPct': round(risk_val/entry*100, 2),
+        'tp1': fmt_p(tp1), 'tp1Pct': round(abs(tp1-entry)/entry*100, 2),
+        'tp2': fmt_p(tp2), 'tp2Pct': round(abs(tp1-entry)/entry*100, 2),
+        'tp3': fmt_p(tp3), 'tp3Pct': round(abs(tp3-entry)/entry*100, 2),
         'rr1': round(abs(tp1-entry)/risk_val, 1),
         'rr2': round(abs(tp2-entry)/risk_val, 1),
-        'risk': round(risk_val, 2),
-        'atr': round(cur_atr, 2)
+        'risk': fmt_p(risk_val),
+        'atr': fmt_p(cur_atr)
     }
 
 # ── Analysis engine (runs continuously) ──
