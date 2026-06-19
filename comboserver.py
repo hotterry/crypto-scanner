@@ -607,11 +607,18 @@ if __name__ == '__main__':
     print(f"[server] {BIND_HOST}:{PORT}", flush=True)
     load_state()
 
-    # Initial full candle load
-    print("[init] Loading candles...", flush=True)
-    fetch_all_candles()
+    # Start engine immediately (ticker poll starts filling priceData)
+    # Candles load asynchronously to avoid Render startup timeout
     print("[init] Starting engine...", flush=True)
     threading.Thread(target=engine_loop, daemon=True).start()
+
+    # Load candles in background thread
+    def deferred_candle_load():
+        time.sleep(2)
+        print("[init] Loading candles...", flush=True)
+        fetch_all_candles()
+        print("[init] Candles loaded", flush=True)
+    threading.Thread(target=deferred_candle_load, daemon=True).start()
 
     server = http.server.HTTPServer((BIND_HOST, PORT), ComboHandler)
     print(f"[server] http://{BIND_HOST}:{PORT}/", flush=True)
