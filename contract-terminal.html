@@ -1821,24 +1821,28 @@ function init(){
     })
     .catch(function() {});
 
-  // 3) Candles for chart — deferred, BTC 1h first
+  // 3) Candles for chart — deferred, BTC 1h/4h/15m
+  var candleBars = ['1H','4H','15m'];
   setTimeout(function() {
     COINS.forEach(function(coin, idx) {
       setTimeout(function() {
         var inst = coin.replace('USDT', '-USDT-SWAP');
-        fetch(apiBase + '/api/okx/candles?instId=' + inst + '&bar=1H&limit=300')
-          .then(function(r) { return r.json(); })
-          .then(function(data) {
-            if (data && data.code === '0' && Array.isArray(data.data)) {
-              if (!ohlcvCache[coin]) ohlcvCache[coin] = {};
-              ohlcvCache[coin]['1h'] = data.data.map(function(r) {
-                return { time: parseInt(r[0])/1000, open: parseFloat(r[1]), high: parseFloat(r[2]), low: parseFloat(r[3]), close: parseFloat(r[4]), volume: parseFloat(r[5]) };
-              });
-              if (coin === 'BTCUSDT') drawPriceChart();
-            }
-          })
-          .catch(function() {});
-      }, idx * 200);
+        candleBars.forEach(function(bar) {
+          var interval = bar.replace('H','h').toLowerCase();
+          fetch(apiBase + '/api/okx/candles?instId=' + inst + '&bar=' + bar + '&limit=300')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+              if (data && data.code === '0' && Array.isArray(data.data)) {
+                if (!ohlcvCache[coin]) ohlcvCache[coin] = {};
+                ohlcvCache[coin][interval] = data.data.map(function(r) {
+                  return { time: r.time, open: r.open, high: r.high, low: r.low, close: r.close, volume: r.volume };
+                });
+                if (coin === 'BTCUSDT' && interval === '1h') drawPriceChart();
+              }
+            })
+            .catch(function() {});
+        });
+      }, idx * 300);
     });
   }, 500);
 
