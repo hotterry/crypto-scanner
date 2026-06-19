@@ -1570,26 +1570,19 @@ function toast(type,msg){
 }
 function clearSignals(){signalLog=[];updateSignalLog();updateLatestSignals();toast('info','已清空')}
 function forceRefreshData(){
+  // Lightweight: re-fetch tickers only
   var apiBase = _proxyBase || (window.location.protocol + '//' + window.location.host);
-  fetch(apiBase + '/api/state')
+  fetch(apiBase + '/api/okx/tickers')
     .then(function(r) { return r.json(); })
-    .then(function(state) {
-      if (state.priceData) {
-        priceData = state.priceData;
-        Object.keys(priceData).forEach(function(c) {
-          if (priceData[c].ohlcv) {
-            if (!ohlcvCache[c]) ohlcvCache[c] = {};
-            ohlcvCache[c]['1h'] = priceData[c].ohlcv;
-          }
-        });
+    .then(function(data) {
+      if (data && data.code === '0' && data.data) {
+        handleOKXTicker(data.data);
       }
-      if (state.signalLog) signalLog = state.signalLog;
       updateMarketCards();updateCoinTable();updateLatestSignals();drawPriceChart();
-      if(document.getElementById('sltp').classList.contains('active'))updateSLTPSummary();
       toast('info','数据已刷新');
     })
     .catch(function(e) {
-      toast('error','刷新失败: ' + e.message);
+      toast('error','刷新失败');
     });
 }
 function toggleAutoRefresh(){autoRefresh=!autoRefresh;document.getElementById('auto-btn').textContent=autoRefresh?'⏸ 自刷:开':'▶ 自刷:关'}
@@ -1746,101 +1739,102 @@ function init(){
     return;
   }
 
-  // Fetch full state from backend (includes priceData, signalLog, ohlcvCache)
+  // Fast init: parallel lightweight API calls instead of heavy /api/state
   var apiBase = _proxyBase || (window.location.protocol + '//' + window.location.host);
-  fetch(apiBase + '/api/state')
+  
+  // 1) Tickers — instant price + 24h change (~3KB)
+  fetch(apiBase + '/api/okx/tickers')
     .then(function(r) { return r.json(); })
-    .then(function(state) {
-      // Populate from backend cache
-      if (state.priceData) {
-        priceData = state.priceData;
-        Object.keys(priceData).forEach(function(c) {
-          if (priceData[c].ohlcv) {
-            if (!ohlcvCache[c]) ohlcvCache[c] = {};
-            ohlcvCache[c]['1h'] = priceData[c].ohlcv;
+    .then(function(data) {
+      if (data && data.code === '0' && data.data) {
+        data.data.forEach(function(t) {
+          var sym = (t.instId || '').replace('-USDT-SWAP', 'USDT');
+          if (!sym) return;
+          var last = parseFloat(t.last);
+          if (!last) return;
+          if (!priceData[sym]) priceData[sym] = {};
+          priceData[sym].price = last;
+          var open24h = parseFloat(t.open24h);
+          if (open24h > 0) {
+            priceData[sym].change24h = ((last - open24h) / open24h) * 100;
           }
+          // Fill indicator placeholders
+          if (!priceData[sym].rsiVal) priceData[sym].rsiVal = '—';
+          if (!priceData[sym].bbPos) priceData[sym].bbPos = '加载中';
+          if (!priceData[sym].macdSignal) priceData[sym].macdSignal = '⚪';
+          if (!priceData[sym].emaSig) priceData[sym].emaSig = '⚪';
+          if (!priceData[sym].allSignals) priceData[sym].allSignals = [];
         });
-      }
-      if (state.signalLog && state.signalLog.length > 0) {
-        signalLog = state.signalLog;
-        signalLog.forEach(function(s) {
-          var key = s.coin + '_' + s.strategy + '_' + s.type + '_' + (s.time||0);
-          notifiedSignals.add(key);
-        });
-      }
-      if (state.ohlcvCache) {
-        Object.keys(state.ohlcvCache).forEach(function(c) {
-          if (!ohlcvCache[c]) ohlcvCache[c] = {};
-          if (state.ohlcvCache[c]['1h']) ohlcvCache[c]['1h'] = state.ohlcvCache[c]['1h'];
-          if (state.ohlcvCache[c]['4h']) ohlcvCache[c]['4h'] = state.ohlcvCache[c]['4h'];
-        });
-      }
+        updateMarketCards(); updateCoinTable();
+        document.getElementById('last-update').textContent = new Date().toLocaleString([],{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
 
-      dataLoading = false;
-      document.getElementById('panel-title').textContent = '📊 仪表盘';
-      document.getElementById('data-source-badge').innerHTML = '<span class="live-dot green"></span>OKX 实时';
-      document.getElementById('conn-text').textContent = 'OKX 实时';
-      document.getElementById('conn-dot').className = 'status-dot online';
-      document.getElementById('ws-label').textContent = 'OKX 已连接';
-      document.getElementById('ws-indicator').className = 'live-dot green';
-      document.getElementById('ws-status-detail').textContent = 'OKX 后端实时';
-
-      updateMarketCards(); updateCoinTable(); updateLatestSignals(); drawPriceChart();
-      if (document.getElementById('sltp').classList.contains('active')) updateSLTPSummary();
-      toast('success', '✅ OKX实时数据已加载');
-
-      // Connect SSE for live updates
-      connectSSE(apiBase);
-    })
-    .catch(function(e) {
-      console.log('Backend state fetch failed: ' + e.message);
-      // Fallback: try legacy polling
-      document.getElementById('panel-title').textContent = '📊 仪表盘 · 连接...';
-      startWebSocket();
-      _fetchAllHistoricalData();
-      
-      var elapsed = 0;
-      var checkData = setInterval(function() {
-        elapsed++;
-        if (!dataLoading) {
-          clearInterval(checkData);
+        // Mark connected on first ticker receipt
+        if (!window._firstDataShown) {
+          window._firstDataShown = true;
+          dataLoading = false;
           document.getElementById('panel-title').textContent = '📊 仪表盘';
           document.getElementById('data-source-badge').innerHTML = '<span class="live-dot green"></span>OKX 实时';
           document.getElementById('conn-text').textContent = 'OKX 实时';
           document.getElementById('conn-dot').className = 'status-dot online';
           document.getElementById('ws-label').textContent = 'OKX 已连接';
           document.getElementById('ws-indicator').className = 'live-dot green';
-        } else if (elapsed >= 30) {
-          clearInterval(checkData);
-          document.getElementById('panel-title').textContent = '📊 仪表盘 (离线/模拟)';
-          document.getElementById('data-source-badge').innerHTML = '<span class="live-dot gold"></span>离线模拟';
-          document.getElementById('conn-text').textContent = '离线 · 模拟数据';
-          document.getElementById('conn-dot').className = 'status-dot sim';
-          document.getElementById('ws-label').textContent = '未连接';
-          document.getElementById('ws-indicator').className = 'live-dot gold';
+          document.getElementById('ws-status-detail').textContent = 'OKX 后端实时';
+          toast('success', '✅ OKX实时价格已加载');
         }
-      }, 1000);
-    });
+      }
+    })
+    .catch(function(e) { console.log('Ticker fetch failed:', e.message); });
 
-  // Periodic full refresh every 30s as backup
+  // 2) Signal log — lightweight (~10KB)
+  fetch(apiBase + '/api/signals')
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (Array.isArray(data) && data.length > 0) {
+        signalLog = data.slice(0, 200);
+        data.forEach(function(s) {
+          var key = (s.coin||'') + '_' + (s.strategy||'') + '_' + (s.type||'') + '_' + (s.time||0);
+          notifiedSignals.add(key);
+        });
+        updateLatestSignals(); updateSignalLog();
+      }
+    })
+    .catch(function() {});
+
+  // 3) Candles for chart — deferred, only BTC 1h (~80KB)
+  setTimeout(function() {
+    COINS.forEach(function(coin, idx) {
+      setTimeout(function() {
+        var inst = coin.replace('USDT', '-USDT-SWAP');
+        fetch(apiBase + '/api/okx/candles?instId=' + inst + '&bar=1H&limit=300')
+          .then(function(r) { return r.json(); })
+          .then(function(data) {
+            if (data && data.code === '0' && Array.isArray(data.data)) {
+              if (!ohlcvCache[coin]) ohlcvCache[coin] = {};
+              ohlcvCache[coin]['1h'] = data.data.map(function(r) {
+                return { time: parseInt(r[0])/1000, open: parseFloat(r[1]), high: parseFloat(r[2]), low: parseFloat(r[3]), close: parseFloat(r[4]), volume: parseFloat(r[5]) };
+              });
+              if (coin === 'BTCUSDT') drawPriceChart();
+              recalculateForSymbol(coin, '1h');
+              updateCoinTable(); updateLatestSignals();
+            }
+          })
+          .catch(function() {});
+      }, idx * 200); // stagger requests 200ms apart
+    });
+  }, 1000); // wait 1s for tickers to arrive first
+
+  // 4) Periodic ticker refresh every 5s
   setInterval(function() {
     if (!autoRefresh) return;
-    fetch(apiBase + '/api/state')
+    fetch(apiBase + '/api/okx/tickers')
       .then(function(r) { return r.json(); })
-      .then(function(state) {
-        if (state.priceData) {
-          priceData = state.priceData;
-          Object.keys(priceData).forEach(function(c) {
-            if (priceData[c].ohlcv) {
-              if (!ohlcvCache[c]) ohlcvCache[c] = {};
-              ohlcvCache[c]['1h'] = priceData[c].ohlcv;
-            }
-          });
+      .then(function(data) {
+        if (data && data.code === '0' && data.data) {
+          handleOKXTicker(data.data);
         }
-        updateMarketCards(); updateCoinTable(); updateLatestSignals(); drawPriceChart();
       })
       .catch(function() {});
-  }, 30000);
+  }, 5000);
 
   // Request browser notification permission
   document.addEventListener('click', function requestNotify() {
