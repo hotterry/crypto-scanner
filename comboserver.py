@@ -87,7 +87,7 @@ def fetch_candles(symbol, bar='1H', limit=300):
 
 def fetch_all_candles():
     for coin in COINS:
-        for bar in ['1H', '4H']:
+        for bar in ['1H', '4H', '15m']:
             interval = bar.replace('H','h').lower()
             rows = fetch_candles(coin, bar, 300)
             if rows:

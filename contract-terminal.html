@@ -671,12 +671,12 @@ function pollTickers() {
 function fetchHistoricalKlines(symbol, interval) {
   // Fetch candles via local proxy → OKX perpetual swaps
   var limit = 300;
-  var intervalMap = { '1h': '1H', '4h': '4H' };
+  var intervalMap = { '1h': '1H', '4h': '4H', '15m': '15m' };
   var inst = symbol.replace('USDT', '-USDT-SWAP');
   var url = _proxyBase + '/api/okx/candles?instId=' + inst + '&bar=' + intervalMap[interval] + '&limit=' + limit;
   pendingFetchCount++;
   var abortCtrl = new AbortController();
-  var fetchTimeout = setTimeout(function() { abortCtrl.abort(); }, 15000);
+  var fetchTimeout = setTimeout(function() { abortCtrl.abort(); }, 30000);
   fetch(url, {signal: abortCtrl.signal})
     .then(function(r) { return r.json(); })
     .then(function(data) {
@@ -820,7 +820,8 @@ function _connectWS(url, exchange) {
 function _fetchAllHistoricalData() {
   COINS.forEach(function(c) {
     fetchHistoricalKlines(c, '1h');
-    fetchHistoricalKlines(c, '4h');
+    fetchHistoricalKlines(c, "4h");
+    fetchHistoricalKlines(c, "15m");
   });
 }
 
@@ -1135,10 +1136,26 @@ function drawPriceChart(coin) {
   coin = coin || 'BTCUSDT';
   const tf = document.getElementById('chart-tf')?.value || '1h';
   let data;
+  // Try cache first, then fallback to any available interval, only last resort sim
   if (ohlcvCache[coin]?.[tf]?.length > 10) {
     data = ohlcvCache[coin][tf];
   } else {
-    data = generateOHLCV(coin, 200, tf);
+    var altIntervals = ['1h','4h','15m'].filter(function(i){ return i !== tf; });
+    var foundAlt = null;
+    for (var j = 0; j < altIntervals.length; j++) {
+      if (ohlcvCache[coin]?.[altIntervals[j]]?.length > 10) {
+        foundAlt = ohlcvCache[coin][altIntervals[j]];
+        break;
+      }
+    }
+    if (foundAlt) {
+      data = foundAlt;
+      // Update the dropdown to match what we're showing
+      var tfEl = document.getElementById('chart-tf');
+      if (tfEl) tfEl.value = altIntervals[j];
+    } else {
+      data = generateOHLCV(coin, 200, tf);
+    }
   }
 
   const bb=calcBollinger(data),ema50=calcEMA(data,50),ema200=calcEMA(data,200);
