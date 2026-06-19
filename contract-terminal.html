@@ -1193,6 +1193,11 @@ function formatPrice(v, coin) {
   if (v < 100) return v.toFixed(3);
   return v.toFixed(2);
 }
+function formatSLTP(v) {
+  if (v < 1) return v.toFixed(6);
+  if (v < 100) return v.toFixed(3);
+  return v.toFixed(2);
+}
 
 function updateMarketCards() {
   const cards=['BTCUSDT','ETHUSDT','SOLUSDT','DOGEUSDT'];
@@ -1206,9 +1211,9 @@ function updateMarketCards() {
 function sltpBadges(sltp) {
   if (!sltp) return '<span class="tag neutral">计算中...</span>';
   return `<div class="sl-tp-box">
-    <span class="sl-tp-chip sl">🛑SL ${sltp.sl.toFixed(2)} (${sltp.slPct}%)</span>
-    <span class="sl-tp-chip tp1">🎯TP1 ${sltp.tp1.toFixed(2)}</span>
-    <span class="sl-tp-chip tp2">🎯TP2 ${sltp.tp2.toFixed(2)}</span>
+    <span class="sl-tp-chip sl">🛑SL ${formatSLTP(sltp.sl)} (${sltp.slPct}%)</span>
+    <span class="sl-tp-chip tp1">🎯TP1 ${formatSLTP(sltp.tp1)}</span>
+    <span class="sl-tp-chip tp2">🎯TP2 ${formatSLTP(sltp.tp2)}</span>
     <span class="sl-tp-chip rr">R:R 1:${sltp.rr1}/${sltp.rr2}</span>
   </div>`;
 }
@@ -1275,9 +1280,9 @@ function updateSignalLog() {
     <td><strong>${s.coin?.replace('USDT','')||'—'}</strong></td><td>${s.strategy}</td>
     <td><span class="tag ${s.type==='LONG'?'buy':'sell'}">${s.type}</span></td>
     <td>$${formatPrice(s.price,s.coin)}</td>
-    <td style="color:var(--red)">${s.sltp? '$'+s.sltp.sl.toFixed(2):'—'}</td>
-    <td style="color:var(--green)">${s.sltp? '$'+s.sltp.tp1.toFixed(2):'—'}</td>
-    <td style="color:var(--green)">${s.sltp? '$'+s.sltp.tp2.toFixed(2):'—'}</td>
+    <td style="color:var(--red)">${s.sltp? '$'+s.formatSLTP(sltp.sl):'—'}</td>
+    <td style="color:var(--green)">${s.sltp? '$'+s.formatSLTP(sltp.tp1):'—'}</td>
+    <td style="color:var(--green)">${s.sltp? '$'+s.formatSLTP(sltp.tp2):'—'}</td>
     <td>${s.sltp? '1:'+s.sltp.rr1+'/'+s.sltp.rr2:'—'}</td>
     <td>${s.strength}%</td></tr>`).join('')||'<tr><td colspan="10" style="text-align:center;padding:40px;color:var(--fg2)">暂无信号</td></tr>';
 }
@@ -1351,17 +1356,17 @@ function calculateSLTP() {
     <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;font-size:11px">
       <div class="sl-calc-row" style="flex-direction:column;align-items:flex-start;padding:8px;background:var(--red-bg);border-radius:6px">
         <div class="label" style="color:var(--red)">🛑 止损 SL</div>
-        <div class="val" style="color:var(--red)">$${sltp.sl.toFixed(2)}</div>
+        <div class="val" style="color:var(--red)">$${formatSLTP(sltp.sl)}</div>
         <div style="font-size:9px;color:var(--fg2)">距离 ${sltp.slPct}%</div>
       </div>
       <div class="sl-calc-row" style="flex-direction:column;align-items:flex-start;padding:8px;background:var(--green-bg);border-radius:6px">
         <div class="label" style="color:var(--green)">🎯 TP1 (1:${sltp.rr1})</div>
-        <div class="val" style="color:var(--green)">$${sltp.tp1.toFixed(2)}</div>
+        <div class="val" style="color:var(--green)">$${formatSLTP(sltp.tp1)}</div>
         <div style="font-size:9px;color:var(--fg2)">距离 +${sltp.tp1Pct}%</div>
       </div>
       <div class="sl-calc-row" style="flex-direction:column;align-items:flex-start;padding:8px;background:var(--green-bg);border-radius:6px">
         <div class="label" style="color:var(--green)">🎯 TP2 (1:${sltp.rr2})</div>
-        <div class="val" style="color:var(--green)">$${sltp.tp2.toFixed(2)}</div>
+        <div class="val" style="color:var(--green)">$${formatSLTP(sltp.tp2)}</div>
         <div style="font-size:9px;color:var(--fg2)">距离 +${sltp.tp2Pct}%</div>
       </div>
     </div>
@@ -1372,7 +1377,7 @@ function calculateSLTP() {
       <div style="padding:8px;background:var(--bg3);border-radius:6px"><div style="color:var(--fg2);font-size:9px">🎯 TP2收益</div><div class="val" style="color:var(--green)">+$${potentialProfit2.toFixed(2)}</div></div>
     </div>
     <div style="margin-top:8px;padding:8px;background:var(--purple);border-radius:6px;font-size:10px;color:var(--fg0)">
-      🎯 TP3(结构目标): <strong>$${sltp.tp3.toFixed(2)}</strong> (${sltp.tp3Pct}%) &nbsp;|&nbsp; ATR(14): ${sltp.atr.toFixed(2)} &nbsp;|&nbsp; 杠杆: ${leverage}x
+      🎯 TP3(结构目标): <strong>$${formatSLTP(sltp.tp3)}</strong> (${sltp.tp3Pct}%) &nbsp;|&nbsp; ATR(14): ${sltp.atr.toFixed(2)} &nbsp;|&nbsp; 杠杆: ${leverage}x
     </div>`;
 }
 
@@ -1628,9 +1633,9 @@ function showNextAlert() {
   var sltpHTML = '';
   if (s.sltp) {
     sltpHTML = '<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">' +
-      '<span class="sl-tp-chip sl">🛑SL $' + s.sltp.sl.toFixed(2) + '</span>' +
-      '<span class="sl-tp-chip tp1">🎯TP1 $' + s.sltp.tp1.toFixed(2) + '</span>' +
-      '<span class="sl-tp-chip tp2">🎯TP2 $' + s.sltp.tp2.toFixed(2) + '</span>' +
+      '<span class="sl-tp-chip sl">🛑SL $' + s.formatSLTP(sltp.sl) + '</span>' +
+      '<span class="sl-tp-chip tp1">🎯TP1 $' + s.formatSLTP(sltp.tp1) + '</span>' +
+      '<span class="sl-tp-chip tp2">🎯TP2 $' + s.formatSLTP(sltp.tp2) + '</span>' +
       '<span class="sl-tp-chip rr">R:R 1:' + s.sltp.rr1 + '/' + s.sltp.rr2 + '</span></div>';
   }
 
@@ -1691,7 +1696,7 @@ function showNextAlert() {
   // 2) Browser native notification
   if (notificationPermission === 'granted' && 'Notification' in window) {
     var notifBody = side + ' @ $' + priceStr + ' | 置信 ' + s.strength + '%';
-    if (s.sltp) notifBody += ' | SL $' + s.sltp.sl.toFixed(2) + ' TP $' + s.sltp.tp1.toFixed(2);
+    if (s.sltp) notifBody += ' | SL $' + s.formatSLTP(sltp.sl) + ' TP $' + s.formatSLTP(sltp.tp1);
     var n = new Notification(coin + ' · ' + s.strategy, {
       body: notifBody,
       tag: 'trading-signal'
