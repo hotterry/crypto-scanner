@@ -1,10 +1,10 @@
 FROM python:3.11-slim
 
 WORKDIR /app
+COPY comboserver.py contract-terminal.html ./
 
-COPY comboserver.py .
-COPY contract-terminal.html .
+# No pip install needed — stdlib only
 
 EXPOSE 8080
 
-CMD ["python3", "comboserver.py"]
+CMD ["python", "comboserver.py"]
