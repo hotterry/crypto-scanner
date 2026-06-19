@@ -1862,12 +1862,36 @@ function init(){
             var open24h = parseFloat(t.open24h);
             if (open24h > 0) priceData[sym].change24h = ((last - open24h)/open24h)*100;
           });
-          updateMarketCards(); updateCoinTable();
+          updateMarketCards(); updateCoinTable(); updateLatestSignals();
           document.getElementById('last-update').textContent = new Date().toLocaleString([],{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
         }
       })
       .catch(function() {});
   }, 5000);
+
+  // Also poll signal log every 15s to catch signals between SSE reconnects
+  setInterval(function() {
+    if (!autoRefresh) return;
+    fetch(apiBase + '/api/signals')
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (!Array.isArray(data)) return;
+        var hasNew = false;
+        data.forEach(function(s) {
+          var key = s.coin + '_' + s.strategy + '_' + s.type + '_' + (s.time||0);
+          if (!notifiedSignals.has(key) && !isSignalNotifiedBefore(key)) {
+            notifiedSignals.add(key);
+            markSignalNotified(key);
+            hasNew = true;
+          }
+        });
+        if (hasNew) {
+          signalLog = data.slice(0, 200);
+          updateLatestSignals();
+        }
+      })
+      .catch(function() {});
+  }, 15000);
 
   // Request browser notification permission
   document.addEventListener('click', function requestNotify() {
@@ -1876,6 +1900,9 @@ function init(){
     }
     document.removeEventListener('click', requestNotify);
   }, {once: false});
+
+  // 5) Connect SSE for live signal push
+  connectSSE(apiBase);
 
   console.log('🚀 合约交易终端 v3.0 已启动 (后端驱动)');
   console.log('📡 数据: 后端实时拉取 + 信号持久化');
