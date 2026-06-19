@@ -9,6 +9,7 @@ OKX 实时数据代理 + 信号引擎服务器
 """
 
 import http.server
+from socketserver import ThreadingMixIn
 import json
 import urllib.request
 import urllib.parse
@@ -303,16 +304,14 @@ def compute_sltp(entry, side, candles):
 
     risk_val = abs(entry - sl)
 
-    # Precision based on price magnitude
     def fmt_p(v):
-        if abs(v) < 1: return round(v, 6)
-        if abs(v) < 100: return round(v, 3)
-        return round(v, 2)
-
+        if abs(v) < 1: return math.floor(abs(v)*1e6)/1e6 * (1 if v>=0 else -1)
+        if abs(v) < 100: return math.floor(abs(v)*1e3)/1e3 * (1 if v>=0 else -1)
+        return math.floor(abs(v)*100)/100 * (1 if v>=0 else -1)
     return {
         'sl': fmt_p(sl), 'slPct': round(risk_val/entry*100, 2),
         'tp1': fmt_p(tp1), 'tp1Pct': round(abs(tp1-entry)/entry*100, 2),
-        'tp2': fmt_p(tp2), 'tp2Pct': round(abs(tp1-entry)/entry*100, 2),
+        'tp2': fmt_p(tp2), 'tp2Pct': round(abs(tp2-entry)/entry*100, 2),
         'tp3': fmt_p(tp3), 'tp3Pct': round(abs(tp3-entry)/entry*100, 2),
         'rr1': round(abs(tp1-entry)/risk_val, 1),
         'rr2': round(abs(tp2-entry)/risk_val, 1),
@@ -322,7 +321,7 @@ def compute_sltp(entry, side, candles):
 
 # ── Analysis engine (runs continuously) ──
 def analyze_all():
-    global price_data
+    global price_data, signal_log
     for coin in COINS:
         inst = coin.replace('USDT', '-USDT-SWAP')
         with ticker_lock:
@@ -486,6 +485,9 @@ def load_state():
         pass
 
 # ── HTTP Handler ──
+class ThreadingHTTPServer(ThreadingMixIn, http.server.HTTPServer):
+    daemon_threads = True
+
 class ComboHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
@@ -570,9 +572,21 @@ class ComboHandler(http.server.BaseHTTPRequestHandler):
             self._text('Not Found', 404)
             return
 
-        self.send_response(200)
         ct = 'text/html; charset=utf-8' if file_path.endswith('.html') else \
              'application/javascript' if file_path.endswith('.js') else 'text/css'
+        # Inject initial data for HTML pages so they work even when fetch is blocked
+        if file_path.endswith('.html'):
+            content_str = content.decode('utf-8')
+            import json as _json
+            init_data = _json.dumps({
+                'priceData': price_data,
+                'signalLog': signal_log[:200],
+                'tickers': list(ticker_cache.values())
+            }, ensure_ascii=False)
+            inject_script = f'\n<script>window.__INIT_DATA__ = {init_data};</script>\n'
+            content_str = content_str.replace('</head>', inject_script + '</head>')
+            content = content_str.encode('utf-8')
+        self.send_response(200)
         self.send_header('Content-Type', ct)
         self.send_header('Access-Control-Allow-Origin','*')
         self.send_header('Cache-Control','no-cache')
@@ -620,6 +634,6 @@ if __name__ == '__main__':
         print("[init] Candles loaded", flush=True)
     threading.Thread(target=deferred_candle_load, daemon=True).start()
 
-    server = http.server.HTTPServer((BIND_HOST, PORT), ComboHandler)
+    server = ThreadingHTTPServer((BIND_HOST, PORT), ComboHandler)
     print(f"[server] http://{BIND_HOST}:{PORT}/", flush=True)
     server.serve_forever()

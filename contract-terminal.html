@@ -207,7 +207,7 @@
     <div class="topbar">
       <div class="topbar-title" id="panel-title">📊 仪表盘</div>
       <div class="topbar-actions">
-        <span id="data-source-badge" class="data-source-badge live"><span class="live-dot green"></span>Binance 实时</span>
+        <span id="data-source-badge" class="data-source-badge live"><span class="live-dot green"></span>OKX 实时</span>
         <span style="font-size:10px;color:var(--fg2)">更新: <span id="last-update">—</span></span>
         <span class="topbar-time" id="topbar-time"></span>
         <button class="btn btn-sm" onclick="forceRefreshData()">🔄 刷新</button>
@@ -347,7 +347,7 @@
           <div>
             <div class="card">
               <h4 style="margin-bottom:16px">🔌 交易所 API 接入</h4>
-              <div class="form-row"><div class="input-group"><label>交易所</label><select id="ex-exchange" onchange="updateExchangeHint()"><option value="binance" selected>Binance Futures · USDT永续</option><option value="okx">OKX · USDT永续</option><option value="bybit">Bybit · USDT永续</option></select></div></div>
+              <div class="form-row"><div class="input-group"><label>交易所</label><select id="ex-exchange" onchange="updateExchangeHint()"><option value="binance">Binance Futures · USDT永续</option><option value="okx" selected>OKX · USDT永续</option><option value="bybit">Bybit · USDT永续</option></select></div></div>
               <div class="form-row"><div class="input-group"><label>API Key</label><input type="password" id="ex-apikey" placeholder="输入API Key"></div></div>
               <div class="form-row"><div class="input-group"><label>Secret Key</label><input type="password" id="ex-secret" placeholder="输入Secret Key"></div></div>
               <div class="form-row"><div class="input-group"><label>Passphrase (OKX)</label><input type="password" id="ex-passphrase" placeholder="OKX必填"></div></div>
@@ -370,7 +370,7 @@
             </div>
             <div class="card" style="margin-top:12px">
               <h4 style="margin-bottom:8px">📡 数据源</h4>
-              <div style="font-size:11px"><div>行情: <span id="ws-status-detail" style="color:var(--green)">Binance WebSocket 实时</span></div><div style="margin-top:4px;color:var(--fg2)">K线间隔: 1h + 4h (双时间框架)</div><div style="margin-top:4px;color:var(--fg2)">断线自动重连 · 失败降级模拟数据</div></div>
+              <div style="font-size:11px"><div>行情: <span id="ws-status-detail" style="color:var(--green)">OKX WebSocket 实时</span></div><div style="margin-top:4px;color:var(--fg2)">K线间隔: 1h + 4h (双时间框架)</div><div style="margin-top:4px;color:var(--fg2)">断线自动重连 · 失败降级模拟数据</div></div>
             </div>
           </div>
         </div>
@@ -639,7 +639,7 @@ function startLocalPolling() {
         document.getElementById('data-source-badge').innerHTML = '<span class="live-dot green"></span>OKX 实时';
         _fetchAllHistoricalData();
         pollTickers();
-        _tickerInterval = setInterval(pollTickers, 5000);
+        _tickerInterval = setInterval(pollTickers, 30000);
       } else {
         throw new Error('proxy not ready');
       }
@@ -1157,16 +1157,16 @@ function drawPriceChart(coin) {
   }
   // If still no cached data, show loading message instead of random sim data
   if (!data) {
-    var canvas = document.getElementById('price-chart');
-    if (canvas) {
-      var ctx = canvas.getContext('2d');
-      var rect = canvas.parentElement.getBoundingClientRect();
-      canvas.width = rect.width; canvas.height = 460;
-      ctx.fillStyle = '#0a0a0f'; ctx.fillRect(0, 0, canvas.width, canvas.height);
-      ctx.fillStyle = '#b0b0c0'; ctx.font = '14px Inter';
-      ctx.textAlign = 'center';
-      ctx.fillText('⏳ K线数据加载中...', canvas.width/2, 230);
-      ctx.textAlign = 'start';
+    var cvs2 = document.getElementById('price-chart');
+    if (cvs2) {
+      var ctx3 = cvs2.getContext('2d');
+      var rect3 = cvs2.parentElement.getBoundingClientRect();
+      cvs2.width = rect3.width; cvs2.height = 460;
+      ctx3.fillStyle = '#0a0a0f'; ctx3.fillRect(0, 0, cvs2.width, cvs2.height);
+      ctx3.fillStyle = '#b0b0c0'; ctx3.font = '14px Inter';
+      ctx3.textAlign = 'center';
+      ctx3.fillText('⏳ K线数据加载中...', cvs2.width/2, 230);
+      ctx3.textAlign = 'start';
     }
     return;
   }
@@ -1300,7 +1300,10 @@ function updateLatestSignals() {
   })});
   all.sort(function(a,b){ return (b.discoveredAt||b.time) - (a.discoveredAt||a.time); });
   signalLog=[...all.slice(0,200),...signalLog].slice(0,200);
-  var recent=all.slice(0,6);
+  // Dedup: only show the strongest/most recent signal per coin in latest panel
+  var seen={}, deduped=[];
+  all.forEach(function(s){if(!seen[s.coin]){seen[s.coin]=true;deduped.push(s);}});
+  var recent=deduped.slice(0,6);
   if(recent.length===0){document.getElementById('no-signals-msg').style.display='block';return}
   document.getElementById('no-signals-msg').style.display='none';
   document.getElementById('latest-signals').innerHTML=recent.map(s=>{
@@ -1321,9 +1324,9 @@ function updateSignalLog() {
     <td><strong>${s.coin?.replace('USDT','')||'—'}</strong></td><td>${s.strategy}</td>
     <td><span class="tag ${s.type==='LONG'?'buy':'sell'}">${s.type}</span></td>
     <td>$${formatPrice(s.price,s.coin)}</td>
-    <td style="color:var(--red)">${s.sltp? '$'+s.formatSLTP(sltp.sl):'—'}</td>
-    <td style="color:var(--green)">${s.sltp? '$'+s.formatSLTP(sltp.tp1):'—'}</td>
-    <td style="color:var(--green)">${s.sltp? '$'+s.formatSLTP(sltp.tp2):'—'}</td>
+    <td style="color:var(--red)">${s.sltp? '$'+formatSLTP(s.sltp.sl):'—'}</td>
+    <td style="color:var(--green)">${s.sltp? '$'+formatSLTP(s.sltp.tp1):'—'}</td>
+    <td style="color:var(--green)">${s.sltp? '$'+formatSLTP(s.sltp.tp2):'—'}</td>
     <td>${s.sltp? '1:'+s.sltp.rr1+'/'+s.sltp.rr2:'—'}</td>
     <td>${s.strength}%</td></tr>`).join('')||'<tr><td colspan="10" style="text-align:center;padding:40px;color:var(--fg2)">暂无信号</td></tr>';
 }
@@ -1590,7 +1593,7 @@ function loadExchangeConfig(){
     const cfg=JSON.parse(localStorage.getItem('contract_exchange_config')||'null');
     const secret=JSON.parse(localStorage.getItem('contract_exchange_secret')||'null');
     const ts=JSON.parse(localStorage.getItem('contract_trade_settings')||'null');
-    if(cfg){document.getElementById('ex-exchange').value=cfg.exchange||'binance';document.getElementById('ex-apikey').value=secret?.apiKey||'';document.getElementById('ex-secret').value=secret?.secret||'';document.getElementById('ex-passphrase').value=secret?.passphrase||'';if(ts){document.getElementById('ex-leverage').value=ts.leverage||5;document.getElementById('ex-position-size').value=ts.posSize||10;document.getElementById('auto-enable').checked=ts.autoTrade||false;toggleAutoTrade()}updateExchangeHint();exchangeConfig={...cfg,secret:secret?.secret,passphrase:secret?.passphrase,connected:false};document.getElementById('ex-status').innerHTML='<span style="color:var(--fg2)">📋 已加载配置 · 请点连接测试</span>'}
+    if(cfg){document.getElementById('ex-exchange').value=cfg.exchange||'okx';document.getElementById('ex-apikey').value=secret?.apiKey||'';document.getElementById('ex-secret').value=secret?.secret||'';document.getElementById('ex-passphrase').value=secret?.passphrase||'';if(ts){document.getElementById('ex-leverage').value=ts.leverage||5;document.getElementById('ex-position-size').value=ts.posSize||10;document.getElementById('auto-enable').checked=ts.autoTrade||false;toggleAutoTrade()}updateExchangeHint();exchangeConfig={...cfg,secret:secret?.secret,passphrase:secret?.passphrase,connected:false};document.getElementById('ex-status').innerHTML='<span style="color:var(--fg2)">📋 已加载配置 · 请点连接测试</span>'}
   }catch(e){}
 }
 
@@ -1674,9 +1677,9 @@ function showNextAlert() {
   var sltpHTML = '';
   if (s.sltp) {
     sltpHTML = '<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">' +
-      '<span class="sl-tp-chip sl">🛑SL $' + s.formatSLTP(sltp.sl) + '</span>' +
-      '<span class="sl-tp-chip tp1">🎯TP1 $' + s.formatSLTP(sltp.tp1) + '</span>' +
-      '<span class="sl-tp-chip tp2">🎯TP2 $' + s.formatSLTP(sltp.tp2) + '</span>' +
+      '<span class="sl-tp-chip sl">🛑SL $' + formatSLTP(s.sltp.sl) + '</span>' +
+      '<span class="sl-tp-chip tp1">🎯TP1 $' + formatSLTP(s.sltp.tp1) + '</span>' +
+      '<span class="sl-tp-chip tp2">🎯TP2 $' + formatSLTP(s.sltp.tp2) + '</span>' +
       '<span class="sl-tp-chip rr">R:R 1:' + s.sltp.rr1 + '/' + s.sltp.rr2 + '</span></div>';
   }
 
@@ -1684,10 +1687,6 @@ function showNextAlert() {
     '<div style="background:' + sideColor + ';height:100%;width:' + s.strength + '%;border-radius:4px"></div></div>';
 
   var timeStr = new Date((s.discoveredAt || s.time) * 1000).toLocaleString([],{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
-  // Show the actual alert trigger time (wall clock) in HH:mm format so the user sees precise minutes
-  var alertH = new Date().getHours().toString().padStart(2, '0');
-  var alertM = new Date().getMinutes().toString().padStart(2, '0');
-  timeStr = alertH + ':' + alertM + ' (信号时间 ' + new Date(s.time * 1000).toLocaleString([],{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}).replace(/:\d{2}$/, '') + ')';
   var priceStr = s.price < 1 ? s.price.toFixed(6) : s.price.toFixed(2);
 
   // 1) In-page floating alert card
@@ -1737,12 +1736,12 @@ function showNextAlert() {
   // 2) Browser native notification
   if (notificationPermission === 'granted' && 'Notification' in window) {
     var notifBody = side + ' @ $' + priceStr + ' | 置信 ' + s.strength + '%';
-    if (s.sltp) notifBody += ' | SL $' + s.formatSLTP(sltp.sl) + ' TP $' + s.formatSLTP(sltp.tp1);
+    if (s.sltp) notifBody += ' | SL $' + formatSLTP(s.sltp.sl) + ' TP $' + formatSLTP(s.sltp.tp1);
     var n = new Notification(coin + ' · ' + s.strategy, {
       body: notifBody,
       tag: 'trading-signal'
     });
-    setTimeout(function() { n.close(); }, 5000);
+    setTimeout(function() { n.close(); }, 30000);
   }
 
   // Also update signal display
@@ -1785,38 +1784,83 @@ function init(){
     return;
   }
 
-  // Fast init: /api/priceData has indicators, /api/okx/tickers has live prices
+  // Fast init: check for server-injected data first (works even without fetch)
   var apiBase = _proxyBase || (window.location.protocol + '//' + window.location.host);
   
-  // 1) PriceData (indicators + signals, ~15KB) — fill priceData directly
-  fetch(apiBase + '/api/priceData')
-    .then(function(r) { return r.json(); })
-    .then(function(data) {
-      Object.keys(data).forEach(function(sym) {
-        priceData[sym] = data[sym];
-        // Ensure price fallback
-        if (!priceData[sym].price) priceData[sym].price = 0;
+  if (window.__INIT_DATA__) {
+    // Server-injected data available — use it immediately
+    var initData = window.__INIT_DATA__;
+    if (initData.priceData) {
+      Object.keys(initData.priceData).forEach(function(sym) {
+        priceData[sym] = initData.priceData[sym];
       });
-      dataLoading = false;
-      document.getElementById('panel-title').textContent = '📊 仪表盘';
-      document.getElementById('data-source-badge').innerHTML = '<span class="live-dot green"></span>OKX 实时';
-      document.getElementById('conn-text').textContent = 'OKX 实时';
-      document.getElementById('conn-dot').className = 'status-dot online';
-      document.getElementById('ws-label').textContent = 'OKX 已连接';
-      document.getElementById('ws-indicator').className = 'live-dot green';
-      document.getElementById('ws-status-detail').textContent = 'OKX 后端实时';
+    }
+    if (initData.signalLog) {
+      signalLog = initData.signalLog;
+      initData.signalLog.forEach(function(s) {
+        var key = (s.coin||'') + '_' + (s.strategy||'') + '_' + (s.type||'') + '_' + (s.time||0);
+        notifiedSignals.add(key);
+        markSignalNotified(key);
+      });
+    }
+    if (initData.tickers) {
+      initData.tickers.forEach(function(t) {
+        var sym = (t.instId || '').replace('-USDT-SWAP', 'USDT');
+        if (sym && priceData[sym]) {
+          var last = parseFloat(t.last);
+          if (last) priceData[sym].price = last;
+          var open24h = parseFloat(t.open24h);
+          if (open24h > 0) priceData[sym].change24h = ((last - open24h)/open24h)*100;
+        }
+      });
+    }
+    dataLoading = false;
+    document.getElementById('panel-title').textContent = '📊 仪表盘';
+    document.getElementById('data-source-badge').innerHTML = '<span class="live-dot green"></span>OKX 实时';
+    document.getElementById('conn-text').textContent = 'OKX 实时';
+    document.getElementById('conn-dot').className = 'status-dot online';
+    document.getElementById('ws-label').textContent = 'OKX 已连接';
+    document.getElementById('ws-indicator').className = 'live-dot green';
+    document.getElementById('ws-status-detail').textContent = 'OKX 后端实时';
+    updateMarketCards(); updateCoinTable(); updateLatestSignals();
+    document.getElementById('last-update').textContent = new Date().toLocaleString([],{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
+    toast('success', '✅ OKX实时数据已加载');
+    // Skip fetch since we already have data from server injection
+    window._servedFromInitData = true;
+  }
+  
+  // 1) PriceData (indicators + signals, ~15KB) — fill priceData directly
+  // Only fetch if we didn't already get data from __INIT_DATA__
+  if (!window._servedFromInitData) {
+    fetch(apiBase + '/api/priceData')
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        Object.keys(data).forEach(function(sym) {
+          priceData[sym] = data[sym];
+          // Ensure price fallback
+          if (!priceData[sym].price) priceData[sym].price = 0;
+        });
+        dataLoading = false;
+        document.getElementById('panel-title').textContent = '📊 仪表盘';
+        document.getElementById('data-source-badge').innerHTML = '<span class="live-dot green"></span>OKX 实时';
+        document.getElementById('conn-text').textContent = 'OKX 实时';
+        document.getElementById('conn-dot').className = 'status-dot online';
+        document.getElementById('ws-label').textContent = 'OKX 已连接';
+        document.getElementById('ws-indicator').className = 'live-dot green';
+        document.getElementById('ws-status-detail').textContent = 'OKX 后端实时';
 
-      updateMarketCards(); updateCoinTable(); updateLatestSignals();
-      document.getElementById('last-update').textContent = new Date().toLocaleString([],{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
-      toast('success', '✅ OKX实时数据已加载');
-    })
-    .catch(function(e) {
-      console.log('priceData fetch failed:', e.message);
-      // Fallback to old slow path
-      document.getElementById('panel-title').textContent = '📊 仪表盘 · 连接...';
-      startWebSocket();
-      _fetchAllHistoricalData();
-    });
+        updateMarketCards(); updateCoinTable(); updateLatestSignals();
+        document.getElementById('last-update').textContent = new Date().toLocaleString([],{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
+        toast('success', '✅ OKX实时数据已加载');
+      })
+      .catch(function(e) {
+        console.log('priceData fetch failed:', e.message);
+        // Fallback to old slow path
+        document.getElementById('panel-title').textContent = '📊 仪表盘 · 连接...';
+        startWebSocket();
+        _fetchAllHistoricalData();
+      });
+  }
 
   // 2) Signal log
   fetch(apiBase + '/api/signals')
@@ -1859,28 +1903,31 @@ function init(){
     });
   }, 500);
 
-  // 4) Ticker poll every 5s for live price updates
+  // 4) Full state poll every 30s for live price + indicator updates
   setInterval(function() {
     if (!autoRefresh) return;
-    fetch(apiBase + '/api/okx/tickers')
+    fetch(apiBase + '/api/priceData')
       .then(function(r) { return r.json(); })
       .then(function(data) {
-        if (data && data.code === '0' && data.data) {
-          // Only update prices, preserve indicators
-          data.data.forEach(function(t) {
-            var sym = (t.instId || '').replace('-USDT-SWAP', 'USDT');
-            if (!sym || !priceData[sym]) return;
-            var last = parseFloat(t.last);
-            if (last) priceData[sym].price = last;
-            var open24h = parseFloat(t.open24h);
-            if (open24h > 0) priceData[sym].change24h = ((last - open24h)/open24h)*100;
+        if (data && Object.keys(data).length > 0) {
+          Object.keys(data).forEach(function(sym) {
+            // Preserve _tickerPrice/_tickerChange24h if they exist
+            var existing = priceData[sym] || {};
+            var tp = existing._tickerPrice;
+            var tc = existing._tickerChange24h;
+            priceData[sym] = data[sym];
+            if (tp) priceData[sym]._tickerPrice = tp;
+            if (tc !== undefined) priceData[sym]._tickerChange24h = tc;
           });
           updateMarketCards(); updateCoinTable(); updateLatestSignals();
           document.getElementById('last-update').textContent = new Date().toLocaleString([],{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
+          // Also update chart if visible
+          var sel = document.getElementById('chart-coin-select');
+          if (sel && sel.value) drawPriceChart(sel.value);
         }
       })
       .catch(function() {});
-  }, 5000);
+  }, 30000);
 
   // Also poll signal log every 15s to catch signals between SSE reconnects
   setInterval(function() {

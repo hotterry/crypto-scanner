@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>Test</title></head>
+<body>
+<h1>API Test</h1>
+<div id="result">Loading...</div>
+<script>
+var base = window.location.hostname === '127.0.0.1' ? 'http://127.0.0.1:9878' : (window.location.protocol + '//' + window.location.host);
+document.getElementById('result').textContent = 'Fetching from: ' + base;
+fetch(base + '/api/okx/ping')
+  .then(r => r.json())
+  .then(d => { document.getElementById('result').textContent = 'OK! Tickers: ' + d.tickers + ' Signals: ' + d.signals; })
+  .catch(e => { document.getElementById('result').textContent = 'ERROR: ' + e.message; });
+</script>
+</body></html>
