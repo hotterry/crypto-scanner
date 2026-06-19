@@ -1570,16 +1570,27 @@ function toast(type,msg){
 }
 function clearSignals(){signalLog=[];updateSignalLog();updateLatestSignals();toast('info','已清空')}
 function forceRefreshData(){
-  // Always recalculate from cache — never call initSimData which overwrites real data
-  if (ohlcvCache && Object.keys(ohlcvCache).length > 0) {
-    COINS.forEach(c => { if (ohlcvCache[c]) { recalculateForSymbol(c, '1h'); } });
-  } else {
-    // No cached data — re-fetch from REST API
-    _fetchAllHistoricalData();
-  }
-  updateMarketCards();updateCoinTable();updateLatestSignals();drawPriceChart();
-  if(document.getElementById('sltp').classList.contains('active'))updateSLTPSummary();
-  toast('info','数据已刷新');
+  var apiBase = _proxyBase || (window.location.protocol + '//' + window.location.host);
+  fetch(apiBase + '/api/state')
+    .then(function(r) { return r.json(); })
+    .then(function(state) {
+      if (state.priceData) {
+        priceData = state.priceData;
+        Object.keys(priceData).forEach(function(c) {
+          if (priceData[c].ohlcv) {
+            if (!ohlcvCache[c]) ohlcvCache[c] = {};
+            ohlcvCache[c]['1h'] = priceData[c].ohlcv;
+          }
+        });
+      }
+      if (state.signalLog) signalLog = state.signalLog;
+      updateMarketCards();updateCoinTable();updateLatestSignals();drawPriceChart();
+      if(document.getElementById('sltp').classList.contains('active'))updateSLTPSummary();
+      toast('info','数据已刷新');
+    })
+    .catch(function(e) {
+      toast('error','刷新失败: ' + e.message);
+    });
 }
 function toggleAutoRefresh(){autoRefresh=!autoRefresh;document.getElementById('auto-btn').textContent=autoRefresh?'⏸ 自刷:开':'▶ 自刷:关'}
 function updateClock(){document.getElementById('clock').textContent=new Date().toLocaleString([],{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});document.getElementById('topbar-time').textContent=new Date().toLocaleString([],{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})}
@@ -1720,100 +1731,164 @@ function init(){
   loadExchangeConfig();
   updateExchangeHint();
   toggleAutoTrade();
-  // Show loading state first
+
   document.getElementById('panel-title').textContent = '📊 仪表盘 · 加载中...';
   document.getElementById('data-source-badge').innerHTML = '<span class="live-dot gold"></span>加载中';
-  
-  // Defer sim data: only show after 5s if no real data arrived
-  window._simDataTimer = setTimeout(function() {
-    if (Object.keys(ohlcvCache).length === 0 && Object.keys(priceData).length === 0) {
-      initSimData();
-      updateMarketCards();
-      updateCoinTable();
-      updateLatestSignals();
-      drawPriceChart();
-    }
-  }, 30000);
-  var exName = (exchangeConfig?.exchange) || 'okx';
-
-  // If running on file:// protocol, CORS blocks REST and WS won't work well
-  var isFileProtocol = window.location.protocol === 'file:';
-  
-  // Set initial UI state
   document.getElementById('conn-dot').className = 'status-dot sim';
   document.getElementById('ws-indicator').className = 'live-dot gold';
-
+  
+  var isFileProtocol = window.location.protocol === 'file:';
   if (isFileProtocol) {
-    // file:// protocol: skip connection attempts, use sim data only
     document.getElementById('panel-title').textContent = '📊 仪表盘 (离线/模拟)';
     document.getElementById('data-source-badge').innerHTML = '<span class="live-dot gold"></span>离线模拟';
     document.getElementById('conn-text').textContent = '离线 · 模拟数据';
     document.getElementById('ws-label').textContent = 'file:// 模式';
-    console.log('📁 file:// 协议，使用模拟数据');
-  } else {
-    // HTTP server: try to connect to real exchange
-    document.getElementById('panel-title').textContent = '📊 仪表盘 · 连接 ' + exName.toUpperCase() + '...';
-    document.getElementById('conn-text').textContent = '连接 ' + exName.toUpperCase() + '...';
-    document.getElementById('data-source-badge').innerHTML = '<span class="live-dot gold"></span>连接中';
-    document.getElementById('ws-label').textContent = '连接中...';
-    
-    // Try WebSocket & REST
-    startWebSocket();
-    _fetchAllHistoricalData();
-    
-    // After at most 8s, switch to offline mode if no data arrived
-    var elapsed = 0;
-    var checkData = setInterval(function() {
-      elapsed++;
-      if (!dataLoading) {
-        clearInterval(checkData);
-        document.getElementById('panel-title').textContent = '📊 仪表盘';
-        document.getElementById('data-source-badge').innerHTML = '<span class="live-dot green"></span>OKX 实时';
-        document.getElementById('conn-text').textContent = 'OKX 实时';
-        document.getElementById('conn-dot').className = 'status-dot online';
-        document.getElementById('ws-label').textContent = 'OKX 已连接';
-        document.getElementById('ws-indicator').className = 'live-dot green';
-      } else if (elapsed >= 30) {
-        clearInterval(checkData);
-        document.getElementById('panel-title').textContent = '📊 仪表盘 (离线/模拟)';
-        document.getElementById('data-source-badge').innerHTML = '<span class="live-dot gold"></span>离线模拟';
-        document.getElementById('conn-text').textContent = '离线 · 模拟数据';
-        document.getElementById('conn-dot').className = 'status-dot sim';
-        document.getElementById('ws-label').textContent = '未连接';
-        document.getElementById('ws-indicator').className = 'live-dot gold';
-      }
-    }, 1000);
+    return;
   }
-  // Auto-refresh every 30s — recalculate from cache, preserve ticker prices
+
+  // Fetch full state from backend (includes priceData, signalLog, ohlcvCache)
+  var apiBase = _proxyBase || (window.location.protocol + '//' + window.location.host);
+  fetch(apiBase + '/api/state')
+    .then(function(r) { return r.json(); })
+    .then(function(state) {
+      // Populate from backend cache
+      if (state.priceData) {
+        priceData = state.priceData;
+        Object.keys(priceData).forEach(function(c) {
+          if (priceData[c].ohlcv) {
+            if (!ohlcvCache[c]) ohlcvCache[c] = {};
+            ohlcvCache[c]['1h'] = priceData[c].ohlcv;
+          }
+        });
+      }
+      if (state.signalLog && state.signalLog.length > 0) {
+        signalLog = state.signalLog;
+        signalLog.forEach(function(s) {
+          var key = s.coin + '_' + s.strategy + '_' + s.type + '_' + (s.time||0);
+          notifiedSignals.add(key);
+        });
+      }
+      if (state.ohlcvCache) {
+        Object.keys(state.ohlcvCache).forEach(function(c) {
+          if (!ohlcvCache[c]) ohlcvCache[c] = {};
+          if (state.ohlcvCache[c]['1h']) ohlcvCache[c]['1h'] = state.ohlcvCache[c]['1h'];
+          if (state.ohlcvCache[c]['4h']) ohlcvCache[c]['4h'] = state.ohlcvCache[c]['4h'];
+        });
+      }
+
+      dataLoading = false;
+      document.getElementById('panel-title').textContent = '📊 仪表盘';
+      document.getElementById('data-source-badge').innerHTML = '<span class="live-dot green"></span>OKX 实时';
+      document.getElementById('conn-text').textContent = 'OKX 实时';
+      document.getElementById('conn-dot').className = 'status-dot online';
+      document.getElementById('ws-label').textContent = 'OKX 已连接';
+      document.getElementById('ws-indicator').className = 'live-dot green';
+      document.getElementById('ws-status-detail').textContent = 'OKX 后端实时';
+
+      updateMarketCards(); updateCoinTable(); updateLatestSignals(); drawPriceChart();
+      if (document.getElementById('sltp').classList.contains('active')) updateSLTPSummary();
+      toast('success', '✅ OKX实时数据已加载');
+
+      // Connect SSE for live updates
+      connectSSE(apiBase);
+    })
+    .catch(function(e) {
+      console.log('Backend state fetch failed: ' + e.message);
+      // Fallback: try legacy polling
+      document.getElementById('panel-title').textContent = '📊 仪表盘 · 连接...';
+      startWebSocket();
+      _fetchAllHistoricalData();
+      
+      var elapsed = 0;
+      var checkData = setInterval(function() {
+        elapsed++;
+        if (!dataLoading) {
+          clearInterval(checkData);
+          document.getElementById('panel-title').textContent = '📊 仪表盘';
+          document.getElementById('data-source-badge').innerHTML = '<span class="live-dot green"></span>OKX 实时';
+          document.getElementById('conn-text').textContent = 'OKX 实时';
+          document.getElementById('conn-dot').className = 'status-dot online';
+          document.getElementById('ws-label').textContent = 'OKX 已连接';
+          document.getElementById('ws-indicator').className = 'live-dot green';
+        } else if (elapsed >= 30) {
+          clearInterval(checkData);
+          document.getElementById('panel-title').textContent = '📊 仪表盘 (离线/模拟)';
+          document.getElementById('data-source-badge').innerHTML = '<span class="live-dot gold"></span>离线模拟';
+          document.getElementById('conn-text').textContent = '离线 · 模拟数据';
+          document.getElementById('conn-dot').className = 'status-dot sim';
+          document.getElementById('ws-label').textContent = '未连接';
+          document.getElementById('ws-indicator').className = 'live-dot gold';
+        }
+      }, 1000);
+    });
+
+  // Periodic full refresh every 30s as backup
   setInterval(function() {
     if (!autoRefresh) return;
-    COINS.forEach(function(c) {
-      // Only recalculate if we have cache data; don't overwrite with sim
-      if (ohlcvCache[c] && ohlcvCache[c]['1h'] && ohlcvCache[c]['1h'].length > 10) {
-        recalculateForSymbol(c, '1h');
-      }
-    });
-    updateMarketCards(); updateCoinTable(); updateLatestSignals(); drawPriceChart();
+    fetch(apiBase + '/api/state')
+      .then(function(r) { return r.json(); })
+      .then(function(state) {
+        if (state.priceData) {
+          priceData = state.priceData;
+          Object.keys(priceData).forEach(function(c) {
+            if (priceData[c].ohlcv) {
+              if (!ohlcvCache[c]) ohlcvCache[c] = {};
+              ohlcvCache[c]['1h'] = priceData[c].ohlcv;
+            }
+          });
+        }
+        updateMarketCards(); updateCoinTable(); updateLatestSignals(); drawPriceChart();
+      })
+      .catch(function() {});
   }, 30000);
-  // Clean old keys every 30 min
-  setInterval(function() {
-    if (notifiedSignals.size > 500) {
-      var arr = Array.from(notifiedSignals);
-      notifiedSignals = new Set(arr.slice(-200));
-    }
-  }, 1800000);
-  // Request browser notification permission on first user interaction
+
+  // Request browser notification permission
   document.addEventListener('click', function requestNotify() {
     if (notificationPermission === 'default' && 'Notification' in window) {
       Notification.requestPermission().then(function(p) { notificationPermission = p; });
     }
     document.removeEventListener('click', requestNotify);
   }, {once: false});
-  console.log('🚀 合约交易终端 v2.0 已启动');
-  console.log('📡 ' + exName.toUpperCase() + ' WebSocket 实时行情 (1h + 4h 双时间框架)');
-  console.log('🎯 智能SL/TP引擎: ATR止损 + 结构止盈 + R:R计算 + 仓位建议');
-  console.log('📊 策略: 布林带 | RSI | MACD | EMA趋势 | RBF | 综合多策略');
-  console.log('🔌 交易所: OKX | Binance | Bybit');
+
+  console.log('🚀 合约交易终端 v3.0 已启动 (后端驱动)');
+  console.log('📡 数据: 后端实时拉取 + 信号持久化');
+  console.log('🎯 即使关闭浏览器，后端仍持续监控信号');
+}
+
+// ── SSE connection for live signal push ──
+function connectSSE(apiBase) {
+  var es = new EventSource(apiBase + '/api/stream');
+  es.onmessage = function(event) {
+    try {
+      var msg = JSON.parse(event.data);
+      if (msg.type === 'init') {
+        // Full state refresh
+        if (msg.priceData) priceData = msg.priceData;
+        if (msg.signalLog && msg.signalLog.length > 0) {
+          signalLog = msg.signalLog;
+          signalLog.forEach(function(s) {
+            var key = s.coin + '_' + s.strategy + '_' + s.type + '_' + (s.time||0);
+            notifiedSignals.add(key);
+          });
+        }
+        updateMarketCards(); updateCoinTable(); updateLatestSignals(); drawPriceChart();
+      } else if (msg.type === 'signal') {
+        // New signal!
+        var s = msg.data;
+        var key = s.coin + '_' + s.strategy + '_' + s.type + '_' + (s.time||0);
+        if (!notifiedSignals.has(key)) {
+          notifiedSignals.add(key);
+          signalLog = [s].concat(signalLog).slice(0, 200);
+          enqueueAlert(s);
+          updateMarketCards(); updateCoinTable(); updateLatestSignals();
+          if (document.getElementById('sltp').classList.contains('active')) updateSLTPSummary();
+        }
+      }
+    } catch(e) {}
+  };
+  es.onerror = function() {
+    console.log('SSE disconnected, will retry...');
+  };
 }
 init();
 </script>
