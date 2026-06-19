@@ -1194,9 +1194,19 @@ function formatPrice(v, coin) {
   return v.toFixed(2);
 }
 function formatSLTP(v) {
-  if (v < 1) return v.toFixed(6);
-  if (v < 100) return v.toFixed(3);
-  return v.toFixed(2);
+  // Truncate, not round — safety-first for SL/TP prices
+  if (v < 1) {
+    var factor = 1000000;
+    var val = Math.floor(Math.abs(v) * factor) / factor;
+    return (v < 0 ? '-' : '') + val.toFixed(6);
+  }
+  if (v < 100) {
+    var factor = 1000;
+    var val = Math.floor(Math.abs(v) * factor) / factor;
+    return (v < 0 ? '-' : '') + val.toFixed(3);
+  }
+  var val = Math.floor(Math.abs(v) * 100) / 100;
+  return (v < 0 ? '-' : '') + val.toFixed(2);
 }
 
 function updateMarketCards() {
