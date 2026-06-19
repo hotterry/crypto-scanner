@@ -1739,53 +1739,40 @@ function init(){
     return;
   }
 
-  // Fast init: parallel lightweight API calls instead of heavy /api/state
+  // Fast init: /api/priceData has indicators, /api/okx/tickers has live prices
   var apiBase = _proxyBase || (window.location.protocol + '//' + window.location.host);
   
-  // 1) Tickers — instant price + 24h change (~3KB)
-  fetch(apiBase + '/api/okx/tickers')
+  // 1) PriceData (indicators + signals, ~15KB) — fill priceData directly
+  fetch(apiBase + '/api/priceData')
     .then(function(r) { return r.json(); })
     .then(function(data) {
-      if (data && data.code === '0' && data.data) {
-        data.data.forEach(function(t) {
-          var sym = (t.instId || '').replace('-USDT-SWAP', 'USDT');
-          if (!sym) return;
-          var last = parseFloat(t.last);
-          if (!last) return;
-          if (!priceData[sym]) priceData[sym] = {};
-          priceData[sym].price = last;
-          var open24h = parseFloat(t.open24h);
-          if (open24h > 0) {
-            priceData[sym].change24h = ((last - open24h) / open24h) * 100;
-          }
-          // Fill indicator placeholders
-          if (!priceData[sym].rsiVal) priceData[sym].rsiVal = '—';
-          if (!priceData[sym].bbPos) priceData[sym].bbPos = '加载中';
-          if (!priceData[sym].macdSignal) priceData[sym].macdSignal = '⚪';
-          if (!priceData[sym].emaSig) priceData[sym].emaSig = '⚪';
-          if (!priceData[sym].allSignals) priceData[sym].allSignals = [];
-        });
-        updateMarketCards(); updateCoinTable();
-        document.getElementById('last-update').textContent = new Date().toLocaleString([],{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
+      Object.keys(data).forEach(function(sym) {
+        priceData[sym] = data[sym];
+        // Ensure price fallback
+        if (!priceData[sym].price) priceData[sym].price = 0;
+      });
+      dataLoading = false;
+      document.getElementById('panel-title').textContent = '📊 仪表盘';
+      document.getElementById('data-source-badge').innerHTML = '<span class="live-dot green"></span>OKX 实时';
+      document.getElementById('conn-text').textContent = 'OKX 实时';
+      document.getElementById('conn-dot').className = 'status-dot online';
+      document.getElementById('ws-label').textContent = 'OKX 已连接';
+      document.getElementById('ws-indicator').className = 'live-dot green';
+      document.getElementById('ws-status-detail').textContent = 'OKX 后端实时';
 
-        // Mark connected on first ticker receipt
-        if (!window._firstDataShown) {
-          window._firstDataShown = true;
-          dataLoading = false;
-          document.getElementById('panel-title').textContent = '📊 仪表盘';
-          document.getElementById('data-source-badge').innerHTML = '<span class="live-dot green"></span>OKX 实时';
-          document.getElementById('conn-text').textContent = 'OKX 实时';
-          document.getElementById('conn-dot').className = 'status-dot online';
-          document.getElementById('ws-label').textContent = 'OKX 已连接';
-          document.getElementById('ws-indicator').className = 'live-dot green';
-          document.getElementById('ws-status-detail').textContent = 'OKX 后端实时';
-          toast('success', '✅ OKX实时价格已加载');
-        }
-      }
+      updateMarketCards(); updateCoinTable(); updateLatestSignals();
+      document.getElementById('last-update').textContent = new Date().toLocaleString([],{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
+      toast('success', '✅ OKX实时数据已加载');
     })
-    .catch(function(e) { console.log('Ticker fetch failed:', e.message); });
+    .catch(function(e) {
+      console.log('priceData fetch failed:', e.message);
+      // Fallback to old slow path
+      document.getElementById('panel-title').textContent = '📊 仪表盘 · 连接...';
+      startWebSocket();
+      _fetchAllHistoricalData();
+    });
 
-  // 2) Signal log — lightweight (~10KB)
+  // 2) Signal log
   fetch(apiBase + '/api/signals')
     .then(function(r) { return r.json(); })
     .then(function(data) {
@@ -1800,7 +1787,7 @@ function init(){
     })
     .catch(function() {});
 
-  // 3) Candles for chart — deferred, only BTC 1h (~80KB)
+  // 3) Candles for chart — deferred, BTC 1h first
   setTimeout(function() {
     COINS.forEach(function(coin, idx) {
       setTimeout(function() {
@@ -1814,23 +1801,31 @@ function init(){
                 return { time: parseInt(r[0])/1000, open: parseFloat(r[1]), high: parseFloat(r[2]), low: parseFloat(r[3]), close: parseFloat(r[4]), volume: parseFloat(r[5]) };
               });
               if (coin === 'BTCUSDT') drawPriceChart();
-              recalculateForSymbol(coin, '1h');
-              updateCoinTable(); updateLatestSignals();
             }
           })
           .catch(function() {});
-      }, idx * 200); // stagger requests 200ms apart
+      }, idx * 200);
     });
-  }, 1000); // wait 1s for tickers to arrive first
+  }, 500);
 
-  // 4) Periodic ticker refresh every 5s
+  // 4) Ticker poll every 5s for live price updates
   setInterval(function() {
     if (!autoRefresh) return;
     fetch(apiBase + '/api/okx/tickers')
       .then(function(r) { return r.json(); })
       .then(function(data) {
         if (data && data.code === '0' && data.data) {
-          handleOKXTicker(data.data);
+          // Only update prices, preserve indicators
+          data.data.forEach(function(t) {
+            var sym = (t.instId || '').replace('-USDT-SWAP', 'USDT');
+            if (!sym || !priceData[sym]) return;
+            var last = parseFloat(t.last);
+            if (last) priceData[sym].price = last;
+            var open24h = parseFloat(t.open24h);
+            if (open24h > 0) priceData[sym].change24h = ((last - open24h)/open24h)*100;
+          });
+          updateMarketCards(); updateCoinTable();
+          document.getElementById('last-update').textContent = new Date().toLocaleString([],{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
         }
       })
       .catch(function() {});

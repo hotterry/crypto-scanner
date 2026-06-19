@@ -490,6 +490,18 @@ class ComboHandler(http.server.BaseHTTPRequestHandler):
         if path == '/api/okx/ping':
             self._json({'pong':True,'tickers':len(ticker_cache),'signals':len(signal_log)})
             return
+        if path == '/api/priceData':
+            # Lightweight: price + indicators only, no candle data
+            pd = {}
+            for k, v in price_data.items():
+                pd[k] = {
+                    'price': v.get('price'), 'change24h': v.get('change24h'),
+                    'rsiVal': v.get('rsiVal'), 'bbPos': v.get('bbPos'), 'bbPct': v.get('bbPct'),
+                    'macdSignal': v.get('macdSignal'), 'emaSig': v.get('emaSig'),
+                    'allSignals': v.get('allSignals'), 'lastInterval': v.get('lastInterval')
+                }
+            self._json(pd)
+            return
         if path == '/api/state':
             # Full state dump for frontend
             self._json({
