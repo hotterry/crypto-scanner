@@ -690,6 +690,7 @@ function fetchHistoricalKlines(symbol, interval) {
         return { time: r.time, open: r.open, high: r.high, low: r.low, close: r.close, volume: r.volume };
       });
       recalculateForSymbol(symbol, interval);
+      if (symbol === "BTCUSDT" && interval === "1h") drawPriceChart();
       pendingFetchCount--;
       if (dataLoading && pendingFetchCount <= 0) {
         pendingFetchCount = 0;
@@ -954,6 +955,7 @@ function handleKlineUpdate(klineData) {
     if (bars.length > 300) bars.shift();
     // Recalculate indicators & detect signals
     recalculateForSymbol(symbol, interval);
+      if (symbol === "BTCUSDT" && interval === "1h") drawPriceChart();
   } else if (bars.length > 0) {
     // Update last (in-progress) bar
     bars[bars.length - 1] = bar;
