@@ -1632,8 +1632,41 @@ function updateExchangeHint(){
   document.getElementById('ex-hint').textContent=hints[document.getElementById('ex-exchange').value]||'';
 }
 function toggleAutoTrade(){
-  document.getElementById('auto-status').innerHTML=document.getElementById('auto-enable').checked?
-    '<span style="color:var(--green)">🤖 自动交易已启用 · 信号触发自动执行</span>':'<span style="color:var(--fg2)">⏸ 自动交易暂停</span>';
+  var enabled=document.getElementById('auto-enable').checked;
+  document.getElementById('auto-status').innerHTML=enabled?
+    '<span style="color:var(--green)">🤖 自动交易已启用 · 服务端执行</span>':'<span style="color:var(--fg2)">⏸ 自动交易暂停</span>';
+  pushTradeConfig(enabled);
+}
+function pushTradeConfig(enabled){
+  var secret=JSON.parse(localStorage.getItem('contract_exchange_secret')||'null');
+  if(!secret||!secret.apiKey){if(enabled){toast('error','请先配置交易所API');document.getElementById('auto-enable').checked=false;toggleAutoTrade()}return}
+  var config={
+    exchange: document.getElementById('ex-exchange').value,
+    apikey: secret.apiKey,
+    secret: secret.secret,
+    passphrase: secret.passphrase||'',
+    leverage: document.getElementById('ex-leverage').value||5,
+    posSize: document.getElementById('ex-position-size').value||10,
+    strategies: {
+      bollinger: document.getElementById('auto-bollinger')?.checked||false,
+      rsi: document.getElementById('auto-rsi')?.checked||false,
+      macd: document.getElementById('auto-macd')?.checked||false,
+      trend: document.getElementById('auto-trend')?.checked||false,
+      rbf: document.getElementById('auto-rbf')?.checked||false,
+      combo: document.getElementById('auto-combo')?.checked||false,
+      whale: document.getElementById('auto-whale')?.checked||false
+    }
+  };
+  var apiBase = window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost'
+    ? window.location.protocol + '//' + window.location.host
+    : window.location.protocol + '//' + window.location.host;
+  fetch(apiBase + '/api/trade/config', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({enabled: enabled, config: config})
+  }).then(function(r){return r.json()}).then(function(d){
+    if(d.ok)toast('success',enabled?'自动交易已启动 (服务端)':'自动交易已停止');
+  }).catch(function(){});
 }
 // ════════════════════════════════════════════════════════════
 //  LOGIN / REGISTER

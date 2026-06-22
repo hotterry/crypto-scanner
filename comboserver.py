@@ -46,6 +46,12 @@ SIGNAL_FILE = os.path.join(SERVE_DIR, 'signals.json')
 KEYS_FILE = os.path.join(SERVE_DIR, "notified_keys.json")
 CANDLE_FILE = os.path.join(SERVE_DIR, 'candles_cache.json')
 
+# ── Server-side Auto Trading ──
+auto_trade_enabled = False
+auto_trade_config = {}      # {apikey, secret, passphrase, leverage, posSize, strategies:{}}
+auto_trade_last_signal = {}  # {coin: timestamp} per-coin cooldown for auto-trading
+TRADE_COOLDOWN = 300         # 5 min between trades per coin
+
 # ── Whale / OrderBook tracking ──
 orderbook_cache = {}        # {symbol: {bids: [[price,size],..], asks: [[price,size],..], ts: float}}
 whale_last_fetch = 0.0      # timestamp of last whale batch fetch
@@ -130,6 +136,126 @@ def fetch_all_orderbooks():
         time.sleep(0.15)
     whale_last_fetch = now
     print(f"[whale] orderbooks updated for {len(orderbook_cache)} coins", flush=True)
+
+def execute_okx_trade(coin, side, sz, leverage):
+    """Execute market order on OKX using auto_trade_config credentials."""
+    cfg = auto_trade_config
+    inst = coin.replace('USDT', '-USDT-SWAP')
+    apikey = cfg.get('apikey', '')
+    secret = cfg.get('secret', '')
+    passphrase = cfg.get('passphrase', '')
+    if not apikey or not secret:
+        return False
+
+    try:
+        import hmac, base64, hashlib
+        # Set leverage first
+        ts = str(int(time.time() * 1000))
+        body = json.dumps({'instId': inst, 'lever': str(leverage), 'mgnMode': 'cross'})
+        sign_input = ts + 'POST' + '/api/v5/account/set-leverage' + body
+        signature = base64.b64encode(hmac.new(secret.encode(), sign_input.encode(), hashlib.sha256).digest()).decode()
+
+        req = urllib.request.Request('https://www.okx.com/api/v5/account/set-leverage',
+            data=body.encode(),
+            headers={'OK-ACCESS-KEY': apikey, 'OK-ACCESS-SIGN': signature,
+                     'OK-ACCESS-TIMESTAMP': ts, 'OK-ACCESS-PASSPHRASE': passphrase,
+                     'Content-Type': 'application/json'})
+        ctx = ssl.create_default_context()
+        urllib.request.urlopen(req, timeout=10, context=ctx)
+
+        # Place market order
+        ts2 = str(int(time.time() * 1000))
+        order_body = json.dumps({
+            'instId': inst, 'tdMode': 'cross',
+            'side': 'buy' if side == 'LONG' else 'sell',
+            'ordType': 'market', 'sz': str(sz)
+        })
+        sign_input2 = ts2 + 'POST' + '/api/v5/trade/order' + order_body
+        signature2 = base64.b64encode(hmac.new(secret.encode(), sign_input2.encode(), hashlib.sha256).digest()).decode()
+
+        req2 = urllib.request.Request('https://www.okx.com/api/v5/trade/order',
+            data=order_body.encode(),
+            headers={'OK-ACCESS-KEY': apikey, 'OK-ACCESS-SIGN': signature2,
+                     'OK-ACCESS-TIMESTAMP': ts2, 'OK-ACCESS-PASSPHRASE': passphrase,
+                     'Content-Type': 'application/json'})
+        resp = urllib.request.urlopen(req2, timeout=10, context=ctx)
+        result = json.loads(resp.read().decode())
+        if result.get('code') == '0':
+            print(f"[trade] EXECUTED {coin} {side} {sz} contracts", flush=True)
+            return True
+        else:
+            print(f"[trade] FAILED {coin} {side}: {result.get('msg','unknown')}", flush=True)
+            return False
+    except Exception as e:
+        print(f"[trade] ERROR {coin} {side}: {e}", flush=True)
+        return False
+
+def process_auto_trades():
+    """Check new signals and execute auto-trades."""
+    global auto_trade_last_signal
+    if not auto_trade_enabled:
+        return
+    cfg = auto_trade_config
+    strategies = cfg.get('strategies', {})
+    if not strategies:
+        return
+    leverage = int(cfg.get('leverage', 5))
+    pos_pct = float(cfg.get('posSize', 10))
+    now = time.time()
+
+    for coin in COINS:
+        pd = price_data.get(coin, {})
+        sigs = pd.get('allSignals', [])
+        if not sigs:
+            continue
+        # Check last signal for this coin
+        last_key = f'{coin}_last_trade'
+        if now - auto_trade_last_signal.get(last_key, 0) < TRADE_COOLDOWN:
+            continue
+        ls = sigs[-1]
+        sname = ls.get('strategy', '')
+        # Map strategy names to strategy keys
+        strat_map = {
+            '布林带均值回归': 'bollinger', 'RSI超卖反弹': 'rsi', 'RSI超买回落': 'rsi',
+            'MACD金叉': 'macd', 'MACD死叉': 'macd',
+            'EMA趋势金叉': 'trend', 'EMA趋势死叉': 'trend',
+            'RBF假突破': 'rbf', 'RBF假跌破': 'rbf',
+            '综合多策略': 'combo', '综合+巨鲸共振': 'combo',
+            '巨鲸追踪': 'whale'
+        }
+        skey = strat_map.get(sname, None)
+        if not skey or not strategies.get(skey):
+            continue
+        side = ls.get('type', 'LONG')
+        sltp = ls.get('sltp')
+        if not sltp:
+            continue
+        # Calculate position size
+        entry = ls.get('price', 0)
+        sl_price = sltp.get('sl', 0)
+        if entry <= 0 or sl_price <= 0:
+            continue
+        risk_per_unit = abs(entry - sl_price)
+        if risk_per_unit <= 0:
+            continue
+        # Use a default account balance for sizing (10000 USDT)
+        account = 10000.0
+        contracts = (account * pos_pct / 100) / risk_per_unit * leverage
+        # Round contracts based on coin
+        if coin == 'BTCUSDT':
+            contracts = max(1, int(contracts * 100) / 100)
+        elif coin == 'ETHUSDT':
+            contracts = max(1, int(contracts * 10) / 10)
+        else:
+            contracts = max(1, int(contracts))
+        if contracts <= 0:
+            continue
+
+        # Execute trade
+        print(f"[trade] Signal: {coin} {sname} {side} @ {entry} — executing {contracts} contracts", flush=True)
+        ok = execute_okx_trade(coin, side, contracts, leverage)
+        if ok:
+            auto_trade_last_signal[last_key] = now
 
 def get_whale_thresholds(coin):
     """Return (strong_buy, buy, strong_sell, sell) thresholds based on volume tier."""
@@ -585,6 +711,7 @@ def engine_loop():
             fetch_all_tickers()
             fetch_all_orderbooks()
             analyze_all()
+            process_auto_trades()
         except Exception as e:
             print(f"[engine] {e}", flush=True)
             import traceback; traceback.print_exc()
@@ -641,6 +768,35 @@ class ThreadingHTTPServer(ThreadingMixIn, http.server.HTTPServer):
     daemon_threads = True
 
 class ComboHandler(http.server.BaseHTTPRequestHandler):
+    def do_POST(self):
+        parsed = urllib.parse.urlparse(self.path)
+        path = parsed.path
+        content_len = int(self.headers.get('Content-Length', 0))
+        body = self.rfile.read(content_len).decode() if content_len > 0 else '{}'
+        try:
+            data = json.loads(body)
+        except:
+            data = {}
+
+        if path == '/api/trade/config':
+            global auto_trade_enabled, auto_trade_config, auto_trade_last_signal
+            auto_trade_enabled = data.get('enabled', False)
+            if auto_trade_enabled:
+                auto_trade_config = data.get('config', {})
+                auto_trade_last_signal = {}
+                print(f"[trade] Auto-trade ENABLED. Strategies: {list(auto_trade_config.get('strategies',{}).keys())}", flush=True)
+            else:
+                auto_trade_enabled = False
+                auto_trade_config = {}
+                print("[trade] Auto-trade DISABLED", flush=True)
+            self._json({'ok': True, 'enabled': auto_trade_enabled})
+            return
+        if path == '/api/trade/status':
+            self._json({'enabled': auto_trade_enabled, 'strategies': auto_trade_config.get('strategies', {}),
+                        'timestamp': time.time()})
+            return
+        self._json({'error': 'not found'}, 404)
+
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
