@@ -349,14 +349,17 @@
           <div>
             <div class="card">
               <h4 style="margin-bottom:16px">🔌 交易所 API 接入</h4>
-              <div class="form-row"><div class="input-group"><label>交易所</label><select id="ex-exchange" onchange="updateExchangeHint()"><option value="binance">Binance Futures · USDT永续</option><option value="okx" selected>OKX · USDT永续</option><option value="bybit">Bybit · USDT永续</option></select></div></div>
-              <div class="form-row"><div class="input-group"><label>API Key</label><input type="password" id="ex-apikey" placeholder="输入API Key"></div></div>
+             <div class="form-row"><div class="input-group"><label>交易所</label><select id="ex-exchange" onchange="updateExchangeHint()"><option value="binance">Binance Futures · USDT永续</option><option value="okx" selected>OKX · USDT永续</option><option value="bybit">Bybit · USDT永续</option></select></div></div>
+              <div class="form-row"><div class="input-group"><label>注册邮箱</label><input type="email" id="ex-email" placeholder="user@example.com" style="font-family:Inter,sans-serif"></div></div>
+             <div class="form-row"><div class="input-group"><label>API Key</label><input type="password" id="ex-apikey" placeholder="输入API Key"></div></div>
               <div class="form-row"><div class="input-group"><label>Secret Key</label><input type="password" id="ex-secret" placeholder="输入Secret Key"></div></div>
               <div class="form-row"><div class="input-group"><label>Passphrase (OKX)</label><input type="password" id="ex-passphrase" placeholder="OKX必填"></div></div>
               <div style="font-size:10px;color:var(--fg2);margin-bottom:12px;line-height:1.5" id="ex-hint">⚠️ 仅需只读+交易权限，切勿授予提现权限。API密钥只存浏览器本地。</div>
               <div class="form-row"><div class="input-group"><label>默认杠杆</label><input type="number" id="ex-leverage" value="5" min="1" max="125"></div><div class="input-group"><label>仓位%</label><input type="number" id="ex-position-size" value="10"></div></div>
-              <div class="btn-group"><button class="btn primary" onclick="connectExchange()">🔗 连接测试</button><button class="btn success" onclick="saveApiConfig()">💾 保存</button><button class="btn danger btn-sm" onclick="disconnectExchange()">断开</button></div>
-              <div id="ex-status" style="margin-top:12px;font-size:11px"></div>
+             <div class="btn-group"><button class="btn primary" onclick="connectExchange()">🔗 连接测试</button><button class="btn success" onclick="saveApiConfig()">💾 保存</button><button class="btn danger btn-sm" onclick="disconnectExchange()">断开</button></div>
+              <div style="margin-top:12px;font-size:10px;color:var(--fg2)" id="ex-registered-title" hidden>📋 已登记账户:</div>
+              <div id="ex-registered-list" style="margin-top:4px;font-size:10px"></div>
+             <div id="ex-status" style="margin-top:12px;font-size:11px"></div>
             </div>
           </div>
           <div>
@@ -387,7 +390,7 @@
 // ════════════════════════════════════════════════════════════
 const COINS = ['BTCUSDT','ETHUSDT','SOLUSDT','DOGEUSDT','BNBUSDT','AVAXUSDT','LINKUSDT','ARBUSDT'];
 const COIN_NAMES = {BTCUSDT:'Bitcoin',ETHUSDT:'Ethereum',SOLUSDT:'Solana',DOGEUSDT:'Dogecoin',BNBUSDT:'BNB',AVAXUSDT:'Avalanche',LINKUSDT:'Chainlink',ARBUSDT:'Arbitrum'};
-let priceData = {}, signalLog = [], autoRefresh = true, exchangeConfig = null, ws = null, wsConnected = false, wsEnabled = true;
+let priceData = {}, signalLog = [], autoRefresh = true, exchangeConfig = null, ws = null, wsConnected = false, wsEnabled = true, activeEmail = '';
 let notifiedSignals = new Set(); // track signal-time keys already notified
 let alertQueue = []; // queue of pending alerts to show
 let alertShowing = false; // whether an alert is currently displayed
@@ -1585,16 +1588,23 @@ function connectExchange(){
 }
 function saveApiConfig(){
   const ex=document.getElementById('ex-exchange').value;
+  const email=document.getElementById('ex-email').value.trim();
   const apiKey=document.getElementById('ex-apikey').value.trim();
   const secret=document.getElementById('ex-secret').value.trim();
   const passphrase=document.getElementById('ex-passphrase').value.trim();
   const leverage=document.getElementById('ex-leverage').value;
   const posSize=document.getElementById('ex-position-size').value;
   if(!apiKey||!secret){toast('error','请填写API Key');return}
-  exchangeConfig={exchange:ex,apiKey,secret,passphrase,connected:false,leverage,posSize};
+  if(!email){toast('error','请填写注册邮箱');return}
+  activeEmail = email;
+  var accounts=JSON.parse(localStorage.getItem('contract_registered_accounts')||'{}');
+  accounts[email]={exchange:ex,apiKey,secret,passphrase,leverage,posSize,savedAt:Date.now()};
+  localStorage.setItem('contract_registered_accounts',JSON.stringify(accounts));
+  exchangeConfig={exchange:ex,apiKey,secret,passphrase,connected:false,leverage,posSize,email};
   localStorage.setItem('contract_exchange_config',JSON.stringify({...exchangeConfig,secret:'***HIDDEN***'}));
   localStorage.setItem('contract_exchange_secret',JSON.stringify({exchange:ex,apiKey,secret,passphrase}));
   localStorage.setItem('contract_trade_settings',JSON.stringify({leverage,posSize,autoTrade:document.getElementById('auto-enable').checked}));
+  renderRegisteredList();
   toast('success','已保存');connectExchange();
 }
 function disconnectExchange(){
@@ -1610,12 +1620,57 @@ function toggleAutoTrade(){
   document.getElementById('auto-status').innerHTML=document.getElementById('auto-enable').checked?
     '<span style="color:var(--green)">🤖 自动交易已启用 · 信号触发自动执行</span>':'<span style="color:var(--fg2)">⏸ 自动交易暂停</span>';
 }
+function renderRegisteredList(){
+  var accounts=JSON.parse(localStorage.getItem('contract_registered_accounts')||'{}');
+  var emails=Object.keys(accounts);
+  var listEl=document.getElementById('ex-registered-list');
+  var titleEl=document.getElementById('ex-registered-title');
+  if(emails.length===0){listEl.innerHTML='';titleEl.hidden=true;return}
+  titleEl.hidden=false;
+  listEl.innerHTML=emails.map(function(e){
+    var a=accounts[e];
+    var isActive=e===activeEmail;
+    return '<div style="display:flex;align-items:center;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border)">'+
+      '<span style="cursor:pointer;color:var(--'+(isActive?'green':'fg0')+')" onclick="switchAccount(\''+e+'\')">'+(isActive?'✅ ':'')+e+' <span style="color:var(--fg2)">('+a.exchange+')</span></span>'+
+      '<button class="btn btn-sm" onclick="deleteAccount(\''+e+'\')" style="font-size:8px;padding:2px 5px">✕</button></div>';
+  }).join('');
+}
+function switchAccount(email){
+  activeEmail=email;
+  var accounts=JSON.parse(localStorage.getItem('contract_registered_accounts')||'{}');
+  var a=accounts[email];
+  if(!a)return;
+  document.getElementById('ex-exchange').value=a.exchange||'okx';
+  document.getElementById('ex-email').value=email;
+  document.getElementById('ex-apikey').value=a.apiKey||'';
+  document.getElementById('ex-secret').value=a.secret||'';
+  document.getElementById('ex-passphrase').value=a.passphrase||'';
+  document.getElementById('ex-leverage').value=a.leverage||5;
+  document.getElementById('ex-position-size').value=a.posSize||10;
+  exchangeConfig={exchange:a.exchange,apiKey:a.apiKey,secret:a.secret,passphrase:a.passphrase,connected:false,email:email};
+  localStorage.setItem('contract_exchange_config',JSON.stringify({...exchangeConfig,secret:'***HIDDEN***'}));
+  localStorage.setItem('contract_exchange_secret',JSON.stringify({exchange:a.exchange,apiKey:a.apiKey,secret:a.secret,passphrase:a.passphrase}));
+  updateExchangeHint();
+  renderRegisteredList();
+  document.getElementById('ex-status').innerHTML='<span style="color:var(--green)">✅ 已切换至 '+email+'</span>';
+  toast('info','已切换账户: '+email);
+}
+function deleteAccount(email){
+  if(!confirm('确认删除 '+email+' 的API登记?'))return;
+  var accounts=JSON.parse(localStorage.getItem('contract_registered_accounts')||'{}');
+  delete accounts[email];
+  localStorage.setItem('contract_registered_accounts',JSON.stringify(accounts));
+  if(activeEmail===email){activeEmail='';document.getElementById('ex-status').innerHTML='<span style="color:var(--fg2)">已删除</span>';}
+  renderRegisteredList();
+}
+
 function loadExchangeConfig(){
   try{
     const cfg=JSON.parse(localStorage.getItem('contract_exchange_config')||'null');
     const secret=JSON.parse(localStorage.getItem('contract_exchange_secret')||'null');
     const ts=JSON.parse(localStorage.getItem('contract_trade_settings')||'null');
     if(cfg){document.getElementById('ex-exchange').value=cfg.exchange||'okx';document.getElementById('ex-apikey').value=secret?.apiKey||'';document.getElementById('ex-secret').value=secret?.secret||'';document.getElementById('ex-passphrase').value=secret?.passphrase||'';if(ts){document.getElementById('ex-leverage').value=ts.leverage||5;document.getElementById('ex-position-size').value=ts.posSize||10;document.getElementById('auto-enable').checked=ts.autoTrade||false;toggleAutoTrade()}updateExchangeHint();exchangeConfig={...cfg,secret:secret?.secret,passphrase:secret?.passphrase,connected:false};document.getElementById('ex-status').innerHTML='<span style="color:var(--fg2)">📋 已加载配置 · 请点连接测试</span>'}
+    renderRegisteredList();
   }catch(e){}
 }
 
