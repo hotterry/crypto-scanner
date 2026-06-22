@@ -380,8 +380,8 @@
             <div class="card">
               <h4 style="margin-bottom:12px">🤖 自动交易</h4>
               <div class="checkbox-row" style="margin-bottom:8px"><input type="checkbox" id="auto-enable" onchange="toggleAutoTrade()"><label>启用自动交易</label></div>
-              <div class="checkbox-row" style="margin-bottom:8px"><input type="checkbox" id="auto-bollinger" checked><label>布林带均值回归</label></div>
-              <div class="checkbox-row" style="margin-bottom:8px"><input type="checkbox" id="auto-rsi" checked><label>RSI超买超卖</label></div>
+              <div class="checkbox-row" style="margin-bottom:8px"><input type="checkbox" id="auto-bollinger"><label>布林带均值回归</label></div>
+              <div class="checkbox-row" style="margin-bottom:8px"><input type="checkbox" id="auto-rsi"><label>RSI超买超卖</label></div>
               <div class="checkbox-row" style="margin-bottom:8px"><input type="checkbox" id="auto-macd"><label>MACD金叉死叉</label></div>
               <div class="checkbox-row" style="margin-bottom:8px"><input type="checkbox" id="auto-trend"><label>EMA趋势跟踪</label></div>
              <div class="checkbox-row" style="margin-bottom:8px"><input type="checkbox" id="auto-rbf"><label>RBF假突破</label></div>
@@ -1699,14 +1699,21 @@ function doLogin(){
   var apiBase = getApiBase();
   fetch(apiBase+'/api/user/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:email,password:pw})})
     .then(function(r){return r.json()}).then(function(d){
-      if(d.ok){onLoginSuccess(email,st,'登录成功');}else{st.innerHTML='<span style="color:var(--red)">'+d.error+'</span>';}
+      if(d.ok){onLoginSuccess(email,st,'登录成功');}
+      else{tryLocalLogin(email,pw,st);}  // Server rejected → try localStorage
     }).catch(function(){
-      // Fallback to localStorage
-      var users=JSON.parse(localStorage.getItem('contract_users')||'{}');
-      var hp=hashPassword(pw);
-      if(!users[email]||users[email]!==hp){st.innerHTML='<span style="color:var(--red)">邮箱或密码错误</span>';return}
-      onLoginSuccess(email,st,'登录成功 (离线)');
+      tryLocalLogin(email,pw,st);  // Network error → try localStorage
     });
+function tryLocalLogin(email,pw,st){
+  var users=JSON.parse(localStorage.getItem('contract_users')||'{}');
+  var hp=hashPassword(pw);
+  if(!users[email]||users[email]!==hp){st.innerHTML='<span style="color:var(--red)">邮箱或密码错误</span>';return}
+  onLoginSuccess(email,st,'登录成功 (离线模式)');
+  // Sync local account to server
+  var apiBase=getApiBase();
+  fetch(apiBase+'/api/user/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:email,password:pw})})
+    .catch(function(){});
+}
 }
 function onLoginSuccess(email,st,msg){
   loggedInUser=email;activeEmail=email;
