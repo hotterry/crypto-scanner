@@ -45,6 +45,13 @@ sse_lock = threading.Lock()
 SIGNAL_FILE = os.path.join(SERVE_DIR, 'signals.json')
 KEYS_FILE = os.path.join(SERVE_DIR, "notified_keys.json")
 CANDLE_FILE = os.path.join(SERVE_DIR, 'candles_cache.json')
+USERS_FILE = os.path.join(SERVE_DIR, 'users.json')
+ACCOUNTS_FILE = os.path.join(SERVE_DIR, 'accounts.json')
+
+# ── User & Account persistence ──
+server_users = {}          # {email: hashed_password}
+server_accounts = {}       # {email: {exchange, apiKey, secret, passphrase, ...}}
+server_sessions = {}       # {email: {token, expires}}
 
 # ── Server-side Auto Trading ──
 auto_trade_enabled = False
@@ -739,6 +746,20 @@ def save_state():
             json.dump(cd, f)
     except:
         pass
+    try:
+        with open(USERS_FILE, 'w') as f:
+            json.dump(server_users, f, ensure_ascii=False)
+    except:
+        pass
+    # Save accounts WITHOUT API keys for security
+    safe_accounts = {}
+    for e, a in server_accounts.items():
+        safe_accounts[e] = {k: v for k, v in a.items() if k not in ('apiKey', 'secret', 'passphrase')}
+    try:
+        with open(ACCOUNTS_FILE, 'w') as f:
+            json.dump(safe_accounts, f, ensure_ascii=False)
+    except:
+        pass
 
 def load_state():
     global signal_log, notified_keys, candle_cache
@@ -760,6 +781,19 @@ def load_state():
     try:
         with open(CANDLE_FILE) as f:
             candle_cache = json.load(f)
+    except:
+        pass
+    try:
+        with open(USERS_FILE) as f:
+            server_users.update(json.load(f))
+    except:
+        pass
+    try:
+        with open(ACCOUNTS_FILE) as f:
+            server_accounts.update(json.load(f))
+        # Strip API keys from loaded accounts for security display
+        for e, a in server_accounts.items():
+            a.pop('apiKey', None); a.pop('secret', None); a.pop('passphrase', None)
     except:
         pass
 
@@ -795,6 +829,55 @@ class ComboHandler(http.server.BaseHTTPRequestHandler):
             self._json({'enabled': auto_trade_enabled, 'strategies': auto_trade_config.get('strategies', {}),
                         'timestamp': time.time()})
             return
+        if path == '/api/user/register':
+            email = data.get('email', '').strip().lower()
+            pw = data.get('password', '')
+            if not email or not pw:
+                self._json({'ok': False, 'error': '邮箱和密码必填'})
+                return
+            if len(pw) < 6:
+                self._json({'ok': False, 'error': '密码至少6位'})
+                return
+            if email in server_users:
+                self._json({'ok': False, 'error': '该邮箱已注册'})
+                return
+            # Simple hash
+            import hashlib
+            h = hashlib.sha256((email + ':' + pw).encode()).hexdigest()[:24]
+            server_users[email] = h
+            save_state()
+            self._json({'ok': True, 'email': email})
+            return
+        if path == '/api/user/login':
+            email = data.get('email', '').strip().lower()
+            pw = data.get('password', '')
+            if not email or not pw:
+                self._json({'ok': False, 'error': '邮箱和密码必填'})
+                return
+            import hashlib
+            h = hashlib.sha256((email + ':' + pw).encode()).hexdigest()[:24]
+            if server_users.get(email) != h:
+                self._json({'ok': False, 'error': '邮箱或密码错误'})
+                return
+            self._json({'ok': True, 'email': email})
+            return
+        if path == '/api/user/accounts/save':
+            email = data.get('email', '').strip().lower()
+            acct = data.get('account', {})
+            if not email or not acct:
+                self._json({'ok': False, 'error': '参数不完整'})
+                return
+            server_accounts[email] = acct
+            save_state()
+            self._json({'ok': True})
+            return
+        if path == '/api/user/accounts/delete':
+            email = data.get('email', '').strip().lower()
+            if email in server_accounts:
+                del server_accounts[email]
+                save_state()
+            self._json({'ok': True})
+            return
         self._json({'error': 'not found'}, 404)
 
     def do_GET(self):
@@ -816,6 +899,14 @@ class ComboHandler(http.server.BaseHTTPRequestHandler):
                 return
             bars = candle_cache.get(symbol, {}).get(interval, [])[-limit:]
             self._json({'code':'0','data': bars})
+            return
+        if path == '/api/user/accounts/get':
+            email = query.get('email', [None])[0]
+            if email:
+                acct = server_accounts.get(email.strip().lower(), {})
+                self._json({'ok': True, 'email': email, 'account': acct})
+            else:
+                self._json({'ok': True, 'accounts': server_accounts})
             return
         if path == '/api/okx/ping':
             self._json({'pong':True,'tickers':len(ticker_cache),'signals':len(signal_log)})
