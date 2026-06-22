@@ -47,6 +47,7 @@ KEYS_FILE = os.path.join(SERVE_DIR, "notified_keys.json")
 CANDLE_FILE = os.path.join(SERVE_DIR, 'candles_cache.json')
 USERS_FILE = os.path.join(SERVE_DIR, 'users.json')
 ACCOUNTS_FILE = os.path.join(SERVE_DIR, 'accounts.json')
+TRADE_CFG_FILE = os.path.join(SERVE_DIR, 'trade_config.json')
 
 # ── User & Account persistence ──
 server_users = {}          # {email: hashed_password}
@@ -760,6 +761,19 @@ def save_state():
             json.dump(safe_accounts, f, ensure_ascii=False)
     except:
         pass
+    # Save trade config (without API keys)
+    if auto_trade_config:
+        safe_trade = {
+            'enabled': auto_trade_enabled,
+            'strategies': auto_trade_config.get('strategies', {}),
+            'leverage': auto_trade_config.get('leverage', '5'),
+            'posSize': auto_trade_config.get('posSize', '10')
+        }
+        try:
+            with open(TRADE_CFG_FILE, 'w') as f:
+                json.dump(safe_trade, f, ensure_ascii=False)
+        except:
+            pass
 
 def load_state():
     global signal_log, notified_keys, candle_cache
@@ -781,6 +795,17 @@ def load_state():
     try:
         with open(CANDLE_FILE) as f:
             candle_cache = json.load(f)
+    except:
+        pass
+    # Restore trade config (no API keys — user must push those from browser)
+    try:
+        with open(TRADE_CFG_FILE) as f:
+            saved_trade = json.load(f)
+            auto_trade_config['strategies'] = saved_trade.get('strategies', {})
+            auto_trade_config['leverage'] = saved_trade.get('leverage', '5')
+            auto_trade_config['posSize'] = saved_trade.get('posSize', '10')
+            auto_trade_enabled = saved_trade.get('enabled', False)
+            print(f"[init] Restored trade config — enabled={auto_trade_enabled}", flush=True)
     except:
         pass
     try:
