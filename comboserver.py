@@ -49,7 +49,8 @@ CANDLE_FILE = os.path.join(SERVE_DIR, 'candles_cache.json')
 # ── Whale / OrderBook tracking ──
 orderbook_cache = {}        # {symbol: {bids: [[price,size],..], asks: [[price,size],..], ts: float}}
 whale_last_fetch = 0.0      # timestamp of last whale batch fetch
-whale_cooldown = {}         # {coin_type: timestamp} — 30min cooldown per coin+type to prevent spam
+whale_cooldown = {}         # {coin_type: timestamp} — 45min cooldown per coin+type to prevent spam
+whale_global_ts = 0.0          # global throttle: only 1 whale signal every 3 min across all coins
 
 # ── HTTP helpers ──
 def fetch_json(url, timeout=10):
@@ -144,15 +145,18 @@ def get_whale_thresholds(coin):
 
 def detect_whale_signals(coin, orderbook):
     """Detect whale direction signals from order book with coin-specific thresholds."""
-    global whale_cooldown
+    global whale_cooldown, whale_global_ts
     if not orderbook or not orderbook.get('bids') or not orderbook.get('asks'):
         return []
     now = time.time()
-    # Cooldown: skip if any whale signal for this coin was sent within 20min
+    # Global throttle: only 1 whale signal per 3 min across all coins
+    if now - whale_global_ts < 180:
+        return []
+    # Cooldown: skip if any whale signal for this coin was sent within 45min
     for key, ts in list(whale_cooldown.items()):
-        if key.startswith(coin + '_') and now - ts < 1200:
+        if key.startswith(coin + '_') and now - ts < 2700:
             return []
-        elif now - ts >= 2400:
+        elif now - ts >= 5400:
             del whale_cooldown[key]
     bids = orderbook['bids']
     asks = orderbook['asks']
@@ -205,9 +209,11 @@ def detect_whale_signals(coin, orderbook):
         detail_parts.append(f'卖盘偏强 {1/ratio:.1f}x')
         signals.append({'type':'SHORT','strategy':'巨鲸追踪','strength':65,'price':asks[0][0],'time':now,'detail':' · '.join(detail_parts)})
 
-    # Set cooldown for emitted signals
-    for s in signals:
-        whale_cooldown[f'{coin}_{s["type"]}'] = now
+    # Set cooldown + global throttle for emitted signals
+    if signals:
+        whale_global_ts = now
+        for s in signals:
+            whale_cooldown[f'{coin}_{s["type"]}'] = now
     return signals
 
 # ── Indicator engine (Python) ──
