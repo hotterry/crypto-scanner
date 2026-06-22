@@ -1640,6 +1640,25 @@ function toggleAutoTrade(){
     '<span style="color:var(--green)">🤖 自动交易已启用 · 服务端执行</span>':'<span style="color:var(--fg2)">⏸ 自动交易暂停</span>';
   pushTradeConfig(enabled);
 }
+function loadAutoTradeStatus(){
+  var apiBase = getApiBase();
+  fetch(apiBase+'/api/trade/status')
+    .then(function(r){return r.json()}).then(function(d){
+      if(d.strategies){
+        document.getElementById('auto-bollinger').checked = d.strategies.bollinger||false;
+        document.getElementById('auto-rsi').checked = d.strategies.rsi||false;
+        document.getElementById('auto-macd').checked = d.strategies.macd||false;
+        document.getElementById('auto-trend').checked = d.strategies.trend||false;
+        document.getElementById('auto-rbf').checked = d.strategies.rbf||false;
+        document.getElementById('auto-combo').checked = d.strategies.combo||false;
+        document.getElementById('auto-whale').checked = d.strategies.whale||false;
+        document.getElementById('auto-enable').checked = d.enabled||false;
+        if(d.leverage)document.getElementById('ex-leverage').value = d.leverage;
+        if(d.posSize)document.getElementById('ex-position-size').value = d.posSize;
+        toggleAutoTrade();
+      }
+    }).catch(function(){});
+}
 function pushTradeConfig(enabled){
   var secret=JSON.parse(localStorage.getItem('contract_exchange_secret')||'null');
   if(!secret||!secret.apiKey){if(enabled){toast('error','请先配置交易所API');document.getElementById('auto-enable').checked=false;toggleAutoTrade()}return}
@@ -1722,7 +1741,7 @@ function onLoginSuccess(email,st,msg){
   localStorage.setItem('contract_user_session',JSON.stringify({email:email,ts:Date.now()}));
   document.getElementById('ex-email').value=email;
   st.innerHTML='<span style="color:var(--green)">✅ '+msg+'</span>';
-  checkLoginState();loadExchangeConfig();fetchAccountsFromServer(email);
+  checkLoginState();loadExchangeConfig();fetchAccountsFromServer(email);loadAutoTradeStatus();
 }
 
 // ════════════════════════════════════════

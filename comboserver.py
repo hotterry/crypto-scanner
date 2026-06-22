@@ -915,6 +915,13 @@ class ComboHandler(http.server.BaseHTTPRequestHandler):
             else:
                 self._json({'ok': True, 'accounts': server_accounts})
             return
+        if path == '/api/trade/status':
+            self._json({'enabled': auto_trade_enabled,
+                        'strategies': auto_trade_config.get('strategies', {}),
+                        'leverage': auto_trade_config.get('leverage', '5'),
+                        'posSize': auto_trade_config.get('posSize', '10'),
+                        'timestamp': time.time()})
+            return
         if path == '/api/okx/ping':
             self._json({'pong':True,'tickers':len(ticker_cache),'signals':len(signal_log)})
             return
