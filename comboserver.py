@@ -21,7 +21,7 @@ import math
 from collections import OrderedDict
 
 PORT = int(os.environ.get('PORT', 9878))
-BIND_HOST = '0.0.0.0' if os.environ.get('RAILWAY_ENVIRONMENT') or os.environ.get('RENDER') else '127.0.0.1'
+BIND_HOST = '0.0.0.0'
 SERVE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 COINS = ['BTCUSDT','ETHUSDT','SOLUSDT','DOGEUSDT','BNBUSDT','AVAXUSDT','LINKUSDT','ARBUSDT']
