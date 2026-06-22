@@ -46,6 +46,10 @@ SIGNAL_FILE = os.path.join(SERVE_DIR, 'signals.json')
 KEYS_FILE = os.path.join(SERVE_DIR, "notified_keys.json")
 CANDLE_FILE = os.path.join(SERVE_DIR, 'candles_cache.json')
 
+# ── Whale / OrderBook tracking ──
+orderbook_cache = {}        # {symbol: {bids: [[price,size],..], asks: [[price,size],..], ts: float}}
+whale_last_fetch = 0.0      # timestamp of last whale batch fetch
+
 # ── HTTP helpers ──
 def fetch_json(url, timeout=10):
     ctx = ssl.create_default_context()
@@ -97,6 +101,105 @@ def fetch_all_candles():
                 candle_cache[coin][interval] = rows
                 print(f"[candle] {coin} {bar}: {len(rows)} bars", flush=True)
         time.sleep(0.3)  # rate limit
+
+# ── Whale order book ──
+def fetch_order_book(symbol, depth=20):
+    inst = symbol.replace('USDT', '-USDT-SWAP')
+    url = f'https://www.okx.com/api/v5/market/books?instId={inst}&sz={depth}'
+    data = fetch_json(url)
+    if data and data.get('code') == '0' and data.get('data'):
+        item = data['data'][0]
+        return {
+            'bids': [[float(b[0]), float(b[1])] for b in item.get('bids', [])],
+            'asks': [[float(a[0]), float(a[1])] for a in item.get('asks', [])],
+            'ts': float(item.get('ts', 0)) / 1000
+        }
+    return None
+
+def fetch_all_orderbooks():
+    global orderbook_cache, whale_last_fetch
+    now = time.time()
+    if now - whale_last_fetch < 25:
+        return  # throttle to ~30s
+    for coin in COINS:
+        ob = fetch_order_book(coin, 20)
+        if ob:
+            orderbook_cache[coin] = ob
+        time.sleep(0.15)
+    whale_last_fetch = now
+    print(f"[whale] orderbooks updated for {len(orderbook_cache)} coins", flush=True)
+
+def detect_whale_signals(coin, orderbook):
+    """Detect whale direction signals from order book."""
+    if not orderbook or not orderbook.get('bids') or not orderbook.get('asks'):
+        return []
+    bids = orderbook['bids']
+    asks = orderbook['asks']
+    if len(bids) < 5 or len(asks) < 5:
+        return []
+
+    signals = []
+    now = time.time()
+
+    # Calculate total bid/ask volume at top levels
+    bid_vol_5 = sum(b[1] for b in bids[:5])
+    ask_vol_5 = sum(a[1] for a in asks[:5])
+    bid_vol_10 = sum(b[1] for b in bids[:10])
+    ask_vol_10 = sum(a[1] for a in asks[:10])
+    total_bid = bid_vol_5 + bid_vol_10
+    total_ask = ask_vol_5 + ask_vol_10
+
+    if total_ask <= 0:
+        return []
+
+    ratio = total_bid / total_ask
+
+    # Check for whale walls — single price level with outsized volume
+    avg_bid_vol_5 = bid_vol_5 / 5
+    avg_ask_vol_5 = ask_vol_5 / 5
+    bid_whale = False
+    ask_whale = False
+    for b in bids[:5]:
+        if b[1] >= avg_bid_vol_5 * 3:
+            bid_whale = True
+    for a in asks[:5]:
+        if a[1] >= avg_ask_vol_5 * 3:
+            ask_whale = True
+
+    strength = 50
+    detail_parts = []
+
+    # Strong buy pressure
+    if ratio >= 2.5:
+        strength = 85
+        detail_parts.append(f'买盘/卖盘 {ratio:.1f}x')
+        signals.append({'type':'LONG','strategy':'巨鲸追踪','strength':strength,'price':bids[0][0],'time':now,'detail':' · '.join(detail_parts)})
+    elif ratio >= 1.8 and bid_whale:
+        strength = 70
+        detail_parts.append(f'买盘优势 {ratio:.1f}x 有大单')
+        signals.append({'type':'LONG','strategy':'巨鲸追踪','strength':strength,'price':bids[0][0],'time':now,'detail':' · '.join(detail_parts)})
+    elif ratio >= 1.5 and bid_whale:
+        strength = 60
+        detail_parts.append(f'买盘略强 {ratio:.1f}x')
+        signals.append({'type':'LONG','strategy':'巨鲸追踪','strength':strength,'price':bids[0][0],'time':now,'detail':' · '.join(detail_parts)})
+
+    # Strong sell pressure
+    if ratio <= 0.4:
+        strength = 85
+        detail_parts.append(f'卖盘/买盘 {1/ratio:.1f}x')
+        signals.append({'type':'SHORT','strategy':'巨鲸追踪','strength':strength,'price':asks[0][0],'time':now,'detail':' · '.join(detail_parts)})
+    elif ratio <= 0.55 and ask_whale:
+        strength = 70
+        detail_parts.append(f'卖盘优势 {1/ratio:.1f}x 有大单')
+        signals.append({'type':'SHORT','strategy':'巨鲸追踪','strength':strength,'price':asks[0][0],'time':now,'detail':' · '.join(detail_parts)})
+    elif ratio <= 0.67 and ask_whale:
+        strength = 60
+        detail_parts.append(f'卖盘略强 {1/ratio:.1f}x')
+        signals.append({'type':'SHORT','strategy':'巨鲸追踪','strength':strength,'price':asks[0][0],'time':now,'detail':' · '.join(detail_parts)})
+
+    # Also add whale pressure info to price_data for dashboard display
+    whale_dir = '🐳' if ratio > 1.5 else ('🐻' if ratio < 0.67 else '⚖️')
+    return signals
 
 # ── Indicator engine (Python) ──
 def sma(values, period):
@@ -387,11 +490,44 @@ def analyze_all():
                 ema_sig = '🟢多头' if ema50_arr[i] > ema200_arr[i] else '🔴空头'
 
             sigs = detect_signals(coin, bars)
+            # Whale signal detection (from orderbook)
+            ob = orderbook_cache.get(coin)
+            whale_bias = 0  # -1 bearish, 0 neutral, 1 bullish
+            if ob:
+                ws = detect_whale_signals(coin, ob)
+                sigs.extend(ws)
+                # Compute whale bias for combo enhancement
+                bv = sum(b[1] for b in ob['bids'][:5])
+                av = sum(a[1] for a in ob['asks'][:5])
+                if av > 0:
+                    wr = bv / av
+                    if wr > 1.5: whale_bias = 1
+                    elif wr < 0.67: whale_bias = -1
+            # Enhance combo signals with whale direction
+            for s in sigs:
+                if '综合多策略' in s['strategy']:
+                    if (s['type'] == 'LONG' and whale_bias == 1) or (s['type'] == 'SHORT' and whale_bias == -1):
+                        s['strength'] = min(100, s['strength'] + 20)
+                        s['detail'] += ' +🐳共鸣'
+                        s['strategy'] = '综合+巨鲸共振'
+                    elif (s['type'] == 'LONG' and whale_bias == -1) or (s['type'] == 'SHORT' and whale_bias == 1):
+                        s['strength'] = max(20, s['strength'] - 15)
+                        s['detail'] += ' ⚠️鲸鱼反向'
 
+        # Whale direction indicator
+        whale_dir = '—'
+        ob = orderbook_cache.get(coin)
+        if ob and ob.get('bids') and ob.get('asks'):
+            bv = sum(b[1] for b in ob['bids'][:5])
+            av = sum(a[1] for a in ob['asks'][:5])
+            if av > 0:
+                wr = bv / av
+                whale_dir = '🐳买' if wr > 1.8 else ('🐻卖' if wr < 0.55 else ('📈偏买' if wr > 1.3 else ('📉偏卖' if wr < 0.77 else '⚖️平衡')))
         price_data[coin] = {
             'price': live_price, 'change24h': ch24h,
             'rsiVal': rsi_str, 'bbPos': bb_pos, 'bbPct': bb_pct,
             'macdSignal': macd_signal, 'emaSig': ema_sig,
+            'whaleDir': whale_dir,
             'allSignals': sigs,
             'ohlcv': bars if has_indicators else [],
             'lastInterval': '1h'
@@ -432,6 +568,7 @@ def engine_loop():
     while True:
         try:
             fetch_all_tickers()
+            fetch_all_orderbooks()
             analyze_all()
         except Exception as e:
             print(f"[engine] {e}", flush=True)
@@ -518,8 +655,9 @@ class ComboHandler(http.server.BaseHTTPRequestHandler):
             for k, v in price_data.items():
                 pd[k] = {
                     'price': v.get('price'), 'change24h': v.get('change24h'),
-                    'rsiVal': v.get('rsiVal'), 'bbPos': v.get('bbPos'), 'bbPct': v.get('bbPct'),
-                    'macdSignal': v.get('macdSignal'), 'emaSig': v.get('emaSig'),
+                   'rsiVal': v.get('rsiVal'), 'bbPos': v.get('bbPos'), 'bbPct': v.get('bbPct'),
+                    'whaleDir': v.get('whaleDir'),
+                   'macdSignal': v.get('macdSignal'), 'emaSig': v.get('emaSig'),
                     'allSignals': v.get('allSignals'), 'lastInterval': v.get('lastInterval')
                 }
             self._json(pd)

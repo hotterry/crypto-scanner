@@ -239,7 +239,7 @@
         </div>
         <h3 style="font-size:13px;margin:20px 0 10px">📋 币种追踪表 (含止盈止损)</h3>
         <div class="table-wrap"><table><thead><tr>
-          <th>币种</th><th>当前价</th><th>24h%</th><th>RSI</th><th>布林</th><th>MACD</th><th>EMA</th><th>策略信号</th><th>SL/TP建议</th>
+          <th>币种</th><th>当前价</th><th>24h%</th><th>RSI</th><th>布林</th><th>MACD</th><th>EMA</th><th>巨鲸</th><th>策略信号</th><th>SL/TP建议</th>
         </tr></thead><tbody id="coin-table"></tbody></table></div>
       </div>
 
@@ -404,7 +404,8 @@ const DEFAULT_STRATEGIES = {
   macd: { name:'MACD金叉死叉', desc:'MACD(12,26,9)金叉多/死叉空。EMA200大趋势过滤，仅顺势交易。趋势行情高效。', timeframe:'4h', fast:12, slow:26, signal:9, enabled:true, direction:'both', params:{emaFilter:true, histogramConfirm:true, zeroLineFilter:true} },
   trend: { name:'EMA趋势跟踪', desc:'EMA50/200金叉做多，死叉做空。价格在EMA50上方仅做多。中线趋势核心。', timeframe:'4h', emaFast:50, emaSlow:200, enabled:true, direction:'both', params:{pullbackOnly:true, pullbackPct:0.02, atrMultiplier:2} },
   rbf: { name:'区间假突破RBF', desc:'极端市场中假突破后回归区间。识别20K线区间，突破后快速反向回归触发。高波动合约专用。', timeframe:'1h', rangePeriod:20, enabled:true, direction:'both', params:{breakoutPct:0.015, reversalBars:2, volumeConfirm:true, fearGreedFilter:true} },
-  combo: { name:'综合多策略', desc:'布林带+RSI+MACD ≥2策略同向触发。提高信号质量降低假信号率。', timeframe:'1h', enabled:true, direction:'both', params:{minConfirm:2, strategies:['bollinger','rsi','macd'], requireStrength:true} }
+  combo: { name:'综合多策略', desc:'布林带+RSI+MACD ≥2策略同向触发。巨鲸方向共振增强置信度。', timeframe:'1h', enabled:true, direction:'both', params:{minConfirm:2, strategies:['bollinger','rsi','macd'], requireStrength:true} },
+  whale: { name:'巨鲸追踪', desc:'监控OKX订单簿买卖盘深度，识别大单方向。买盘显著强于卖盘做多，反之做空。结合综合策略更精准。', timeframe:'实时', enabled:true, direction:'both', params:{ratioBuy:1.8, ratioSell:0.55, depthLevels:5, whaleWallMult:3} }
 };
 
 // ════════════════════════════════════════════════════════════
@@ -563,6 +564,14 @@ function detectComboSignals(data) {
   const t=b+r+m;
   if(t>=2)signals.push({type:'LONG',strategy:'综合多策略',strength:55+Math.abs(t)*20,price:p,time:data[i].time,detail:`${t}策略共振做多 B:${b} R:${r} M:${m}`});
   if(t<=-2)signals.push({type:'SHORT',strategy:'综合多策略',strength:55+Math.abs(t)*20,price:p,time:data[i].time,detail:`${Math.abs(t)}策略共振做空 B:${b} R:${r} M:${m}`});
+  // Whale tracking signal (based on priceData whaleDir)
+  var pd2 = priceData[coin];
+  var wdStr = pd2 && pd2.whaleDir;
+  if (wdStr && wdStr !== '—') {
+    var wtype = (wdStr.indexOf('买')>=0 || wdStr.indexOf('🐳')>=0) ? 'LONG' : (wdStr.indexOf('卖')>=0 || wdStr.indexOf('🐻')>=0) ? 'SHORT' : null;
+    var wstrength = wtype === 'LONG' ? (wdStr.indexOf('🐳')>=0 ? 80 : 60) : (wtype === 'SHORT' ? (wdStr.indexOf('🐻')>=0 ? 80 : 60) : 50);
+    if (wtype) signals.push({type:wtype,strategy:'巨鲸追踪',strength:wstrength,price:p,time:data[i].time,detail:wdStr});
+  }
   return signals;
 }
 
@@ -1296,7 +1305,7 @@ function updateCoinTable() {
 '<td>$'+formatPrice(d.price,coin)+'</td>'+
 '<td style="color:var(--'+(ch>=0?'green':'red')+')">'+(ch>=0?'+':'')+ch.toFixed(2)+'%</td>'+
 '<td style="color:'+(rsiVal>70?'var(--red)':rsiVal<30?'var(--green)':'var(--fg0)')+'">'+rsiVal+'</td>'+
-'<td>'+bbPos+'</td><td>'+macdSig+'</td><td>'+emaSig+'</td><td>'+sigHTML+'</td>'+
+'<td>'+bbPos+'</td><td>'+macdSig+'</td><td>'+emaSig+'</td><td style="font-size:12px">'+(d.whaleDir||'—')+'</td><td>+sigHTML+'</td>'+
 '<td style="font-size:10px;max-width:260px">'+sltpHTML+'</td></tr>';
   }).join('');
   const totalSigs=COINS.reduce((s,c)=>s+(priceData[c]?.allSignals?.length||0),0);
