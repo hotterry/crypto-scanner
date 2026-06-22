@@ -49,6 +49,7 @@ CANDLE_FILE = os.path.join(SERVE_DIR, 'candles_cache.json')
 # ── Whale / OrderBook tracking ──
 orderbook_cache = {}        # {symbol: {bids: [[price,size],..], asks: [[price,size],..], ts: float}}
 whale_last_fetch = 0.0      # timestamp of last whale batch fetch
+whale_cooldown = {}         # {coin_type: timestamp} — 30min cooldown per coin+type to prevent spam
 
 # ── HTTP helpers ──
 def fetch_json(url, timeout=10):
@@ -143,15 +144,22 @@ def get_whale_thresholds(coin):
 
 def detect_whale_signals(coin, orderbook):
     """Detect whale direction signals from order book with coin-specific thresholds."""
+    global whale_cooldown
     if not orderbook or not orderbook.get('bids') or not orderbook.get('asks'):
         return []
+    now = time.time()
+    # Cooldown: skip if any whale signal for this coin was sent within 20min
+    for key, ts in list(whale_cooldown.items()):
+        if key.startswith(coin + '_') and now - ts < 1200:
+            return []
+        elif now - ts >= 2400:
+            del whale_cooldown[key]
     bids = orderbook['bids']
     asks = orderbook['asks']
     if len(bids) < 5 or len(asks) < 5:
         return []
 
     signals = []
-    now = time.time()
     strong_buy, buy_th, strong_sell, sell_th = get_whale_thresholds(coin)
 
     # Calculate total bid/ask volume at top levels
@@ -197,6 +205,9 @@ def detect_whale_signals(coin, orderbook):
         detail_parts.append(f'卖盘偏强 {1/ratio:.1f}x')
         signals.append({'type':'SHORT','strategy':'巨鲸追踪','strength':65,'price':asks[0][0],'time':now,'detail':' · '.join(detail_parts)})
 
+    # Set cooldown for emitted signals
+    for s in signals:
+        whale_cooldown[f'{coin}_{s["type"]}'] = now
     return signals
 
 # ── Indicator engine (Python) ──
