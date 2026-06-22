@@ -129,8 +129,20 @@ def fetch_all_orderbooks():
     whale_last_fetch = now
     print(f"[whale] orderbooks updated for {len(orderbook_cache)} coins", flush=True)
 
+def get_whale_thresholds(coin):
+    """Return (strong_buy, buy, strong_sell, sell) thresholds based on volume tier."""
+    high_vol = ['BTCUSDT', 'ETHUSDT']
+    mid_vol  = ['SOLUSDT', 'BNBUSDT', 'LINKUSDT', 'AVAXUSDT']
+    low_vol  = ['DOGEUSDT', 'ARBUSDT']
+    if coin in high_vol:
+        return (4.0, 2.5, 0.25, 0.4)   # BTC/ETH: need very strong imbalance
+    elif coin in mid_vol:
+        return (3.2, 2.0, 0.3, 0.5)    # SOL/BNB/LINK/AVAX: moderate
+    else:
+        return (2.8, 1.8, 0.35, 0.55)  # DOGE/ARB: looser
+
 def detect_whale_signals(coin, orderbook):
-    """Detect whale direction signals from order book."""
+    """Detect whale direction signals from order book with coin-specific thresholds."""
     if not orderbook or not orderbook.get('bids') or not orderbook.get('asks'):
         return []
     bids = orderbook['bids']
@@ -140,6 +152,7 @@ def detect_whale_signals(coin, orderbook):
 
     signals = []
     now = time.time()
+    strong_buy, buy_th, strong_sell, sell_th = get_whale_thresholds(coin)
 
     # Calculate total bid/ask volume at top levels
     bid_vol_5 = sum(b[1] for b in bids[:5])
@@ -157,48 +170,33 @@ def detect_whale_signals(coin, orderbook):
     # Check for whale walls — single price level with outsized volume
     avg_bid_vol_5 = bid_vol_5 / 5
     avg_ask_vol_5 = ask_vol_5 / 5
-    bid_whale = False
-    ask_whale = False
-    for b in bids[:5]:
-        if b[1] >= avg_bid_vol_5 * 3:
-            bid_whale = True
-    for a in asks[:5]:
-        if a[1] >= avg_ask_vol_5 * 3:
-            ask_whale = True
+    bid_whale = any(b[1] >= avg_bid_vol_5 * 4 for b in bids[:5])
+    ask_whale = any(a[1] >= avg_ask_vol_5 * 4 for a in asks[:5])
 
-    strength = 50
     detail_parts = []
 
-    # Strong buy pressure
-    if ratio >= 2.5:
-        strength = 85
-        detail_parts.append(f'买盘/卖盘 {ratio:.1f}x')
-        signals.append({'type':'LONG','strategy':'巨鲸追踪','strength':strength,'price':bids[0][0],'time':now,'detail':' · '.join(detail_parts)})
-    elif ratio >= 1.8 and bid_whale:
-        strength = 70
+    # Strong buy — requires ratio ≥ strong_buy AND whale wall
+    if ratio >= strong_buy and bid_whale:
+        detail_parts.append(f'买盘碾压 {ratio:.1f}x 有大单')
+        signals.append({'type':'LONG','strategy':'巨鲸追踪','strength':88,'price':bids[0][0],'time':now,'detail':' · '.join(detail_parts)})
+    elif ratio >= buy_th and bid_whale:
         detail_parts.append(f'买盘优势 {ratio:.1f}x 有大单')
-        signals.append({'type':'LONG','strategy':'巨鲸追踪','strength':strength,'price':bids[0][0],'time':now,'detail':' · '.join(detail_parts)})
-    elif ratio >= 1.5 and bid_whale:
-        strength = 60
-        detail_parts.append(f'买盘略强 {ratio:.1f}x')
-        signals.append({'type':'LONG','strategy':'巨鲸追踪','strength':strength,'price':bids[0][0],'time':now,'detail':' · '.join(detail_parts)})
+        signals.append({'type':'LONG','strategy':'巨鲸追踪','strength':75,'price':bids[0][0],'time':now,'detail':' · '.join(detail_parts)})
+    elif ratio >= buy_th:
+        detail_parts.append(f'买盘偏强 {ratio:.1f}x')
+        signals.append({'type':'LONG','strategy':'巨鲸追踪','strength':65,'price':bids[0][0],'time':now,'detail':' · '.join(detail_parts)})
 
-    # Strong sell pressure
-    if ratio <= 0.4:
-        strength = 85
-        detail_parts.append(f'卖盘/买盘 {1/ratio:.1f}x')
-        signals.append({'type':'SHORT','strategy':'巨鲸追踪','strength':strength,'price':asks[0][0],'time':now,'detail':' · '.join(detail_parts)})
-    elif ratio <= 0.55 and ask_whale:
-        strength = 70
+    # Strong sell — requires ratio ≤ strong_sell AND whale wall
+    if ratio <= strong_sell and ask_whale:
+        detail_parts.append(f'卖盘碾压 {1/ratio:.1f}x 有大单')
+        signals.append({'type':'SHORT','strategy':'巨鲸追踪','strength':88,'price':asks[0][0],'time':now,'detail':' · '.join(detail_parts)})
+    elif ratio <= sell_th and ask_whale:
         detail_parts.append(f'卖盘优势 {1/ratio:.1f}x 有大单')
-        signals.append({'type':'SHORT','strategy':'巨鲸追踪','strength':strength,'price':asks[0][0],'time':now,'detail':' · '.join(detail_parts)})
-    elif ratio <= 0.67 and ask_whale:
-        strength = 60
-        detail_parts.append(f'卖盘略强 {1/ratio:.1f}x')
-        signals.append({'type':'SHORT','strategy':'巨鲸追踪','strength':strength,'price':asks[0][0],'time':now,'detail':' · '.join(detail_parts)})
+        signals.append({'type':'SHORT','strategy':'巨鲸追踪','strength':75,'price':asks[0][0],'time':now,'detail':' · '.join(detail_parts)})
+    elif ratio <= sell_th:
+        detail_parts.append(f'卖盘偏强 {1/ratio:.1f}x')
+        signals.append({'type':'SHORT','strategy':'巨鲸追踪','strength':65,'price':asks[0][0],'time':now,'detail':' · '.join(detail_parts)})
 
-    # Also add whale pressure info to price_data for dashboard display
-    whale_dir = '🐳' if ratio > 1.5 else ('🐻' if ratio < 0.67 else '⚖️')
     return signals
 
 # ── Indicator engine (Python) ──
@@ -501,8 +499,8 @@ def analyze_all():
                 av = sum(a[1] for a in ob['asks'][:5])
                 if av > 0:
                     wr = bv / av
-                    if wr > 1.5: whale_bias = 1
-                    elif wr < 0.67: whale_bias = -1
+                    if wr > 2.5: whale_bias = 1
+                    elif wr < 0.4: whale_bias = -1
             # Enhance combo signals with whale direction
             for s in sigs:
                 if '综合多策略' in s['strategy']:
@@ -522,7 +520,7 @@ def analyze_all():
             av = sum(a[1] for a in ob['asks'][:5])
             if av > 0:
                 wr = bv / av
-                whale_dir = '🐳买' if wr > 1.8 else ('🐻卖' if wr < 0.55 else ('📈偏买' if wr > 1.3 else ('📉偏卖' if wr < 0.77 else '⚖️平衡')))
+                whale_dir = '🐳买' if wr > 2.5 else ('🐻卖' if wr < 0.4 else ('📈偏买' if wr > 1.8 else ('📉偏卖' if wr < 0.55 else '⚖️平衡')))
         price_data[coin] = {
             'price': live_price, 'change24h': ch24h,
             'rsiVal': rsi_str, 'bbPos': bb_pos, 'bbPct': bb_pct,
