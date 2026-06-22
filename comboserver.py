@@ -856,8 +856,15 @@ class ComboHandler(http.server.BaseHTTPRequestHandler):
                 return
             import hashlib
             h = hashlib.sha256((email + ':' + pw).encode()).hexdigest()[:24]
-            if server_users.get(email) != h:
-                self._json({'ok': False, 'error': '邮箱或密码错误'})
+            existing = server_users.get(email)
+            if existing and existing != h:
+                self._json({'ok': False, 'error': '密码错误'})
+                return
+            if not existing:
+                # Auto-register if user doesn't exist (Render deploy wiped users.json)
+                server_users[email] = h
+                save_state()
+                self._json({'ok': True, 'email': email, 'autoRegistered': True})
                 return
             self._json({'ok': True, 'email': email})
             return
