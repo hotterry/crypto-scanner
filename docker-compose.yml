@@ -1,0 +1,10 @@
+version: '3'
+services:
+  crypto-scanner:
+    build: .
+    container_name: crypto-scanner
+    ports:
+      - "9878:9878"
+    restart: unless-stopped
+    environment:
+      - PORT=9878
