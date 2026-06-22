@@ -1305,7 +1305,7 @@ function updateCoinTable() {
 '<td>$'+formatPrice(d.price,coin)+'</td>'+
 '<td style="color:var(--'+(ch>=0?'green':'red')+')">'+(ch>=0?'+':'')+ch.toFixed(2)+'%</td>'+
 '<td style="color:'+(rsiVal>70?'var(--red)':rsiVal<30?'var(--green)':'var(--fg0)')+'">'+rsiVal+'</td>'+
-'<td>'+bbPos+'</td><td>'+macdSig+'</td><td>'+emaSig+'</td><td style="font-size:12px">'+(d.whaleDir||'—')+'</td><td>+sigHTML+'</td>'+
+ '<td>'+bbPos+'</td><td>'+macdSig+'</td><td>'+emaSig+'</td><td style="font-size:12px">'+(d.whaleDir||'—')+'</td><td>'+sigHTML+'</td>'+
 '<td style="font-size:10px;max-width:260px">'+sltpHTML+'</td></tr>';
   }).join('');
   const totalSigs=COINS.reduce((s,c)=>s+(priceData[c]?.allSignals?.length||0),0);
