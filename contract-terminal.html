@@ -57,6 +57,7 @@
   .table-wrap th { text-align:left; padding:12px 16px; font-size:10px; text-transform:uppercase; letter-spacing:0.8px; color:var(--fg2); background:var(--bg1); border-bottom:1px solid var(--border); white-space:nowrap; }
   .table-wrap td { padding:11px 16px; border-bottom:1px solid var(--border); font-family:'JetBrains Mono',monospace; font-size:11px; }
   .table-wrap tr:hover td { background:var(--bg3); }
+  .table-wrap tbody tr { cursor:pointer; transition:background 0.1s; }
   .tag { display:inline-block; padding:3px 8px; border-radius:4px; font-size:10px; font-weight:600; white-space:nowrap; }
   .tag.buy { background:var(--green-bg); color:var(--green); }
   .tag.sell { background:var(--red-bg); color:var(--red); }
@@ -222,10 +223,11 @@
         <div class="cards" id="market-cards"></div>
         <div class="grid2">
           <div class="chart-box" style="height:460px">
-            <div class="chart-header"><h3>BTC/USDT 实时K线</h3>
-            <span style="font-size:10px">
+            <div class="chart-header"><h3 id="chart-coin-label">BTC/USDT 实时K线</h3>
+            <span style="font-size:10px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+              <select id="chart-coin-select" onchange="switchChartCoin(this.value)" style="font-size:10px;padding:2px 6px"><option value="BTCUSDT">BTC/USDT</option><option value="ETHUSDT">ETH/USDT</option><option value="SOLUSDT">SOL/USDT</option><option value="DOGEUSDT">DOGE/USDT</option><option value="BNBUSDT">BNB/USDT</option><option value="AVAXUSDT">AVAX/USDT</option><option value="LINKUSDT">LINK/USDT</option><option value="ARBUSDT">ARB/USDT</option></select>
               <select id="chart-tf" onchange="drawPriceChart()" style="font-size:10px;padding:2px 6px"><option value="1h">1小时</option><option value="4h">4小时</option><option value="15m">15分钟</option></select>
-              <span style="color:var(--fg2);margin-left:6px">布林(20·2)·EMA50·EMA200</span>
+              <span style="color:var(--fg2)">布林(20·2)·EMA50·EMA200</span>
             </span></div>
             <canvas id="price-chart"></canvas>
           </div>
@@ -391,6 +393,7 @@ let alertShowing = false; // whether an alert is currently displayed
 let notificationPermission = 'default'; // browser notification state
 let ohlcvCache = {};
 let dataLoading = true;
+let currentChartCoin = 'BTCUSDT'; // 当前K线图币种
 let pendingFetchCount = 0;
 
 // Default strategies
@@ -690,7 +693,7 @@ function fetchHistoricalKlines(symbol, interval) {
         return { time: r.time, open: r.open, high: r.high, low: r.low, close: r.close, volume: r.volume };
       });
       recalculateForSymbol(symbol, interval);
-      if (symbol === "BTCUSDT") drawPriceChart();
+      if (symbol === currentChartCoin) drawPriceChart();
       pendingFetchCount--;
       if (dataLoading && pendingFetchCount <= 0) {
         pendingFetchCount = 0;
@@ -956,7 +959,7 @@ function handleKlineUpdate(klineData) {
     if (bars.length > 300) bars.shift();
     // Recalculate indicators & detect signals
     recalculateForSymbol(symbol, interval);
-      if (symbol === "BTCUSDT") drawPriceChart();
+      if (symbol === currentChartCoin) drawPriceChart();
   } else if (bars.length > 0) {
     // Update last (in-progress) bar
     bars[bars.length - 1] = bar;
@@ -1132,8 +1135,13 @@ function initSimData() {
 // ════════════════════════════════════════════════════════════
 //  CHARTS
 // ════════════════════════════════════════════════════════════
+
+function switchChartCoin(coin) {
+  currentChartCoin = coin;
+  drawPriceChart(coin);
+}
 function drawPriceChart(coin) {
-  coin = coin || 'BTCUSDT';
+  coin = coin || currentChartCoin;
   const tf = document.getElementById('chart-tf')?.value || '1h';
   let data;
   // Try cache first, then fallback to any available interval, only last resort sim
@@ -1171,6 +1179,10 @@ function drawPriceChart(coin) {
     return;
   }
 
+  var chartLabelEl = document.getElementById('chart-coin-label');
+  if (chartLabelEl) chartLabelEl.textContent = coin.replace('USDT','') + '/USDT 实时K线';
+  var coinSel = document.getElementById('chart-coin-select');
+  if (coinSel && coinSel.value !== coin) coinSel.value = coin;
   const bb=calcBollinger(data),ema50=calcEMA(data,50),ema200=calcEMA(data,200);
   const canvas=document.getElementById('price-chart');
   if(!canvas) return;
@@ -1279,7 +1291,7 @@ function updateCoinTable() {
     var bbPos = d.bbPos || '加载中';
     var macdSig = d.macdSignal || '⚪';
     var emaSig = d.emaSig || '⚪';
-    return '<tr><td><strong>'+coin.replace('USDT','')+'</strong><span style="font-size:9px;color:var(--fg2);display:block">'+COIN_NAMES[coin]+'</span></td>'+
+    return '<tr onclick="switchChartCoin(\''+coin+'\')" style="cursor:pointer" title="点击查看'+COIN_NAMES[coin]+'K线"><td><strong>'+coin.replace('USDT','')+'</strong><span style="font-size:9px;color:var(--fg2);display:block">'+COIN_NAMES[coin]+'</span></td>'+
 '<td>$'+formatPrice(d.price,coin)+'</td>'+
 '<td style="color:var(--'+(ch>=0?'green':'red')+')">'+(ch>=0?'+':'')+ch.toFixed(2)+'%</td>'+
 '<td style="color:'+(rsiVal>70?'var(--red)':rsiVal<30?'var(--green)':'var(--fg0)')+'">'+rsiVal+'</td>'+
@@ -1894,7 +1906,7 @@ function init(){
                 ohlcvCache[coin][interval] = data.data.map(function(r) {
                   return { time: r.time, open: r.open, high: r.high, low: r.low, close: r.close, volume: r.volume };
                 });
-                if (coin === "BTCUSDT") drawPriceChart();
+                if (coin === currentChartCoin) drawPriceChart();
               }
             })
             .catch(function() {});
