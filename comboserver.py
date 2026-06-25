@@ -23,6 +23,7 @@ from collections import OrderedDict
 PORT = int(os.environ.get('PORT', 9878))
 BIND_HOST = '0.0.0.0'
 SERVE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.environ.get('DATA_DIR', SERVE_DIR)
 
 COINS = ['BTCUSDT','ETHUSDT','SOLUSDT','DOGEUSDT','BNBUSDT','AVAXUSDT','LINKUSDT','ARBUSDT']
 COIN_NAMES = {
@@ -42,12 +43,12 @@ signal_lock = threading.Lock()
 sse_clients = []
 sse_lock = threading.Lock()
 
-SIGNAL_FILE = os.path.join(SERVE_DIR, 'signals.json')
-KEYS_FILE = os.path.join(SERVE_DIR, "notified_keys.json")
-CANDLE_FILE = os.path.join(SERVE_DIR, 'candles_cache.json')
-USERS_FILE = os.path.join(SERVE_DIR, 'users.json')
-ACCOUNTS_FILE = os.path.join(SERVE_DIR, 'accounts.json')
-TRADE_CFG_FILE = os.path.join(SERVE_DIR, 'trade_config.json')
+SIGNAL_FILE = os.path.join(DATA_DIR, 'signals.json')
+KEYS_FILE = os.path.join(DATA_DIR, "notified_keys.json")
+CANDLE_FILE = os.path.join(DATA_DIR, 'candles_cache.json')
+USERS_FILE = os.path.join(DATA_DIR, 'users.json')
+ACCOUNTS_FILE = os.path.join(DATA_DIR, 'accounts.json')
+TRADE_CFG_FILE = os.path.join(DATA_DIR, 'trade_config.json')
 
 # ── User & Account persistence ──
 server_users = {}          # {email: hashed_password}
@@ -156,38 +157,39 @@ def execute_okx_trade(coin, side, sz, leverage):
         return False
 
     try:
-        import hmac, base64, hashlib
-        # Set leverage first
-        ts = str(int(time.time() * 1000))
-        body = json.dumps({'instId': inst, 'lever': str(leverage), 'mgnMode': 'cross'})
-        sign_input = ts + 'POST' + '/api/v5/account/set-leverage' + body
-        signature = base64.b64encode(hmac.new(secret.encode(), sign_input.encode(), hashlib.sha256).digest()).decode()
-
-        req = urllib.request.Request('https://www.okx.com/api/v5/account/set-leverage',
-            data=body.encode(),
-            headers={'OK-ACCESS-KEY': apikey, 'OK-ACCESS-SIGN': signature,
-                     'OK-ACCESS-TIMESTAMP': ts, 'OK-ACCESS-PASSPHRASE': passphrase,
-                     'Content-Type': 'application/json'})
+        import hmac, base64, hashlib, http.client
+        from datetime import datetime, timezone
         ctx = ssl.create_default_context()
-        urllib.request.urlopen(req, timeout=10, context=ctx)
+
+        def okx_request(method, path, body=None):
+            ts = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
+            sign_input = ts + method + path + (body if body else '')
+            signature = base64.b64encode(hmac.new(secret.encode(), sign_input.encode(), hashlib.sha256).digest()).decode()
+            conn = http.client.HTTPSConnection("www.okx.com", 443, context=ctx, timeout=10)
+            headers = {
+                "OK-ACCESS-KEY": apikey, "OK-ACCESS-SIGN": signature,
+                "OK-ACCESS-TIMESTAMP": ts, "OK-ACCESS-PASSPHRASE": passphrase,
+                "Content-Type": "application/json", "User-Agent": "Mozilla/5.0"
+            }
+            conn.request(method, path, body=body.encode() if body else None, headers=headers)
+            resp = conn.getresponse()
+            result = json.loads(resp.read().decode())
+            conn.close()
+            return result
+
+        # Set leverage first
+        lev_body = json.dumps({'instId': inst, 'lever': str(leverage), 'mgnMode': 'cross'})
+        lev_result = okx_request('POST', '/api/v5/account/set-leverage', lev_body)
+        if lev_result.get('code') != '0':
+            print(f"[trade] Leverage set failed {coin}: {lev_result.get('msg','unknown')}", flush=True)
 
         # Place market order
-        ts2 = str(int(time.time() * 1000))
         order_body = json.dumps({
             'instId': inst, 'tdMode': 'cross',
             'side': 'buy' if side == 'LONG' else 'sell',
             'ordType': 'market', 'sz': str(sz)
         })
-        sign_input2 = ts2 + 'POST' + '/api/v5/trade/order' + order_body
-        signature2 = base64.b64encode(hmac.new(secret.encode(), sign_input2.encode(), hashlib.sha256).digest()).decode()
-
-        req2 = urllib.request.Request('https://www.okx.com/api/v5/trade/order',
-            data=order_body.encode(),
-            headers={'OK-ACCESS-KEY': apikey, 'OK-ACCESS-SIGN': signature2,
-                     'OK-ACCESS-TIMESTAMP': ts2, 'OK-ACCESS-PASSPHRASE': passphrase,
-                     'Content-Type': 'application/json'})
-        resp = urllib.request.urlopen(req2, timeout=10, context=ctx)
-        result = json.loads(resp.read().decode())
+        result = okx_request('POST', '/api/v5/trade/order', order_body)
         if result.get('code') == '0':
             print(f"[trade] EXECUTED {coin} {side} {sz} contracts", flush=True)
             return True
@@ -222,17 +224,12 @@ def process_auto_trades():
             continue
         ls = sigs[-1]
         sname = ls.get('strategy', '')
-        # Map strategy names to strategy keys
-        strat_map = {
-            '布林带均值回归': 'bollinger', 'RSI超卖反弹': 'rsi', 'RSI超买回落': 'rsi',
-            'MACD金叉': 'macd', 'MACD死叉': 'macd',
-            'EMA趋势金叉': 'trend', 'EMA趋势死叉': 'trend',
-            'RBF假突破': 'rbf', 'RBF假跌破': 'rbf',
-            '综合多策略': 'combo', '综合+巨鲸共振': 'combo',
-            '巨鲸追踪': 'whale'
-        }
-        skey = strat_map.get(sname, None)
-        if not skey or not strategies.get(skey):
+
+        # Only execute auto-trade on '综合+巨鲸共振' (combo + whale resonance)
+        # This is the most reliable signal — combo enhanced by whale direction
+        if sname != '综合+巨鲸共振':
+            continue
+        if not strategies.get('combo'):
             continue
         side = ls.get('type', 'LONG')
         sltp = ls.get('sltp')
@@ -711,19 +708,74 @@ def broadcast_signal(sig):
                 dead.append(c)
         for d in dead:
             sse_clients.remove(d)
+    # Telegram notification for important signals
+    if sig.get('strategy') in ('综合+巨鲸共振',):
+        coin = sig.get('coin', '?')
+        stype = sig.get('type', '?')
+        price = sig.get('price', 0)
+        detail = sig.get('detail', '')
+        msg = f"<b>🚨 {coin} {stype}</b>\n策略: {sig['strategy']}\n价格: {price}\n详情: {detail}"
+        send_telegram_alert(msg)
+
+# ── Telegram alert (optional) ──
+TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '')
+TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID', '')
+
+def send_telegram_alert(text):
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        return
+    try:
+        import http.client
+        import urllib.parse
+        data = urllib.parse.urlencode({'chat_id': TELEGRAM_CHAT_ID, 'text': text, 'parse_mode': 'HTML'})
+        conn = http.client.HTTPSConnection("api.telegram.org", timeout=10)
+        conn.request("POST", f"/bot{TELEGRAM_BOT_TOKEN}/sendMessage", body=data,
+                     headers={"Content-Type": "application/x-www-form-urlencoded", "User-Agent": "Mozilla/5.0"})
+        resp = conn.getresponse()
+        resp.read()
+        conn.close()
+    except:
+        pass
 
 # ── Main loop ──
+last_candle_fetch = 0
+
 def engine_loop():
+    global last_candle_fetch
     while True:
         try:
+            now = time.time()
             fetch_all_tickers()
             fetch_all_orderbooks()
+            if now - last_candle_fetch > 60:
+                fetch_all_candles()
+                last_candle_fetch = now
             analyze_all()
             process_auto_trades()
+            broadcast_market_update()
         except Exception as e:
             print(f"[engine] {e}", flush=True)
             import traceback; traceback.print_exc()
         time.sleep(5)
+
+def broadcast_market_update():
+    """Broadcast priceData + balance update to all SSE clients (every 5s)."""
+    data = json.dumps({
+        'type': 'market_update',
+        'priceData': price_data,
+        'signalLog': signal_log[:200],
+        'tickers': list(ticker_cache.values())
+    }, ensure_ascii=False)
+    with sse_lock:
+        dead = []
+        for c in sse_clients:
+            try:
+                c.write(f"data: {data}\n\n".encode())
+                c.flush()
+            except:
+                dead.append(c)
+        for d in dead:
+            sse_clients.remove(d)
 
 # ── Persistence ──
 def save_state():
@@ -758,7 +810,7 @@ def save_state():
         safe_accounts[e] = {k: v for k, v in a.items() if k not in ('apiKey', 'secret', 'passphrase')}
     try:
         with open(ACCOUNTS_FILE, 'w') as f:
-            json.dump(safe_accounts, f, ensure_ascii=False)
+            json.dump(server_accounts, f, ensure_ascii=False)
     except:
         pass
     # Save trade config (without API keys)
@@ -776,7 +828,7 @@ def save_state():
             pass
 
 def load_state():
-    global signal_log, notified_keys, candle_cache
+    global signal_log, notified_keys, candle_cache, server_accounts, server_users
     try:
         with open(SIGNAL_FILE) as f:
             signal_log = json.load(f)
@@ -813,13 +865,16 @@ def load_state():
             server_users.update(json.load(f))
     except:
         pass
+    print("[load_state] about to load ACCOUNTS_FILE...", flush=True)
+    print(f"[load_state] ACCOUNTS_FILE path: {ACCOUNTS_FILE}", flush=True)
     try:
         with open(ACCOUNTS_FILE) as f:
-            server_accounts.update(json.load(f))
-        # Strip API keys from loaded accounts for security display
-        for e, a in server_accounts.items():
-            a.pop('apiKey', None); a.pop('secret', None); a.pop('passphrase', None)
-    except:
+            loaded_data = json.load(f)
+            print(f"[load_state] loaded {len(loaded_data)} accounts: {list(loaded_data.keys())}", flush=True)
+            server_accounts.update(loaded_data)
+            print(f"[load_state] server_accounts now has {len(server_accounts)} entries", flush=True)
+    except Exception as e:
+        print(f"[load_state] ACCOUNTS_FILE error: {e}", flush=True)
         pass
 
 # ── HTTP Handler ──
@@ -841,13 +896,28 @@ class ComboHandler(http.server.BaseHTTPRequestHandler):
             global auto_trade_enabled, auto_trade_config, auto_trade_last_signal
             auto_trade_enabled = data.get('enabled', False)
             if auto_trade_enabled:
-                auto_trade_config = data.get('config', {})
+                # Use server-stored API keys from accounts (cross-device safe)
+                acct_keys = {}
+                if server_accounts:
+                    for email, acct in server_accounts.items():
+                        if acct.get('apiKey') and acct.get('secret'):
+                            acct_keys = {'apikey': acct['apiKey'], 'secret': acct['secret'],
+                                         'passphrase': acct.get('passphrase', '')}
+                            break
+                cfg = data.get('config', {})
+                # Override API keys with server-stored ones (ignore per-device localStorage keys)
+                if acct_keys:
+                    cfg['apikey'] = acct_keys['apikey']
+                    cfg['secret'] = acct_keys['secret']
+                    cfg['passphrase'] = acct_keys['passphrase']
+                auto_trade_config = cfg
                 auto_trade_last_signal = {}
                 print(f"[trade] Auto-trade ENABLED. Strategies: {list(auto_trade_config.get('strategies',{}).keys())}", flush=True)
             else:
                 auto_trade_enabled = False
                 auto_trade_config = {}
                 print("[trade] Auto-trade DISABLED", flush=True)
+            save_state()
             self._json({'ok': True, 'enabled': auto_trade_enabled})
             return
         if path == '/api/trade/status':
@@ -913,6 +983,17 @@ class ComboHandler(http.server.BaseHTTPRequestHandler):
         self._json({'error': 'not found'}, 404)
 
     def do_GET(self):
+        try:
+            return self._do_get()
+        except Exception as e:
+            print(f"[http] do_GET CRASH: {e}", flush=True)
+            import traceback; traceback.print_exc()
+            try:
+                self.send_error(500, f"Server Error: {e}")
+            except:
+                pass
+
+    def _do_get(self):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
         query = urllib.parse.parse_qs(parsed.query)
@@ -1000,6 +1081,66 @@ class ComboHandler(http.server.BaseHTTPRequestHandler):
                         sse_clients.remove(self.wfile)
             return
 
+        if path == '/api/okx/balance':
+            # Fetch OKX account balance — try auto_trade_config first, then server_accounts
+            cfg = auto_trade_config
+            apikey = cfg.get('apikey', '')
+            secret = cfg.get('secret', '')
+            passphrase = cfg.get('passphrase', '')
+            # Fallback to server_accounts if trade config has no keys
+            if not apikey and server_accounts:
+                for email, acct in server_accounts.items():
+                    if acct.get('apiKey') and acct.get('secret'):
+                        apikey = acct['apiKey']
+                        secret = acct['secret']
+                        passphrase = acct.get('passphrase', '')
+                        break
+            if not apikey or not secret:
+                self._json({'ok': False, 'error': '未配置API密钥', 'balance': 0, 'equity': 0, 'unrealized': 0, 'margin': 0})
+                return
+            try:
+                import hmac, base64, hashlib
+                from datetime import datetime, timezone
+                ts = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
+                sign_input = ts + 'GET' + '/api/v5/account/balance'
+                signature = base64.b64encode(hmac.new(secret.encode(), sign_input.encode(), hashlib.sha256).digest()).decode()
+                import http.client
+                ctx = ssl.create_default_context()
+                conn = http.client.HTTPSConnection("www.okx.com", 443, context=ctx, timeout=10)
+                conn.request("GET", "/api/v5/account/balance", headers={
+                    "OK-ACCESS-KEY": apikey, "OK-ACCESS-SIGN": signature,
+                    "OK-ACCESS-TIMESTAMP": ts, "OK-ACCESS-PASSPHRASE": passphrase,
+                    "Content-Type": "application/json", "User-Agent": "Mozilla/5.0"
+                })
+                resp = conn.getresponse()
+                result = json.loads(resp.read().decode())
+                conn.close()
+                if result.get('code') == '0' and result.get('data'):
+                    bal = result['data'][0]
+                    def to_float(v):
+                        try: return float(v) if v != '' else 0.0
+                        except: return 0.0
+                    total_equity = to_float(bal.get('totalEq', 0))
+                    avail_equity = to_float(bal.get('availEq', 0)) or total_equity
+                    unrealized = sum(to_float(d.get('upl', 0)) for d in bal.get('details', []))
+                    margin = sum(to_float(d.get('mgn', 0)) for d in bal.get('details', []))
+                    self._json({'ok': True, 'balance': avail_equity, 'equity': total_equity,
+                                'availEq': avail_equity, 'unrealized': unrealized, 'margin': margin})
+                else:
+                    self._json({'ok': False, 'error': result.get('msg', 'API错误'), 'balance': 0, 'equity': 0, 'unrealized': 0, 'margin': 0})
+            except urllib.error.HTTPError as e:
+                body = e.read().decode()
+                err_msg = f'OKX拒绝: HTTP {e.code}'
+                # Try to extract OKX error code from body
+                if 'error code' in body:
+                    err_msg += f' ({body.strip()})'
+                else:
+                    err_msg += f' {body[:100]}'
+                self._json({'ok': False, 'error': err_msg, 'balance': 0, 'equity': 0, 'unrealized': 0, 'margin': 0})
+            except Exception as e:
+                self._json({'ok': False, 'error': str(e), 'balance': 0, 'equity': 0, 'unrealized': 0, 'margin': 0})
+            return
+
         # Static file serving
         file_path = os.path.join(SERVE_DIR, path.lstrip('/'))
         if not os.path.exists(file_path) or path == '/':
@@ -1007,24 +1148,36 @@ class ComboHandler(http.server.BaseHTTPRequestHandler):
         try:
             with open(file_path, 'rb') as f:
                 content = f.read()
-        except:
+        except Exception as e:
+            print(f"[http] file open failed {file_path}: {e}", flush=True)
             self._text('Not Found', 404)
             return
 
         ct = 'text/html; charset=utf-8' if file_path.endswith('.html') else \
              'application/javascript' if file_path.endswith('.js') else 'text/css'
+        print(f"[http] serving {path} -> {file_path} ({len(content)} bytes)", flush=True)
         # Inject initial data for HTML pages so they work even when fetch is blocked
         if file_path.endswith('.html'):
-            content_str = content.decode('utf-8')
-            import json as _json
-            init_data = _json.dumps({
-                'priceData': price_data,
-                'signalLog': signal_log[:200],
-                'tickers': list(ticker_cache.values())
-            }, ensure_ascii=False)
-            inject_script = f'\n<script>window.__INIT_DATA__ = {init_data};</script>\n'
-            content_str = content_str.replace('</head>', inject_script + '</head>')
-            content = content_str.encode('utf-8')
+            try:
+                content_str = content.decode('utf-8')
+                import json as _json
+                # Strip ohlcv from priceData to keep page size down (was 400KB+)
+                _pd_no_ohlcv = {}
+                for _coin, _data in price_data.items():
+                    _d = dict(_data)
+                    _d.pop('ohlcv', None)
+                    _pd_no_ohlcv[_coin] = _d
+                init_data = _json.dumps({
+                    'priceData': _pd_no_ohlcv,
+                    'signalLog': signal_log[:200],
+                    'tickers': list(ticker_cache.values())
+                }, ensure_ascii=False)
+                inject_script = f'\n<script>window.__INIT_DATA__ = {init_data};</script>\n'
+                content_str = content_str.replace('</head>', inject_script + '</head>')
+                content = content_str.encode('utf-8')
+            except Exception as e:
+                print(f"[http] HTML injection failed: {e}", flush=True)
+                import traceback; traceback.print_exc()
         self.send_response(200)
         self.send_header('Content-Type', ct)
         self.send_header('Access-Control-Allow-Origin','*')

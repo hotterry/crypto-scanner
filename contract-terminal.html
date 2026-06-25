@@ -270,7 +270,7 @@
               <h4 style="margin-bottom:12px">回测参数</h4>
               <div class="form-row">
                 <div class="input-group"><label>币种</label><select id="bt-pair"><option>BTCUSDT</option><option>ETHUSDT</option><option>SOLUSDT</option><option>DOGEUSDT</option><option>BNBUSDT</option></select></div>
-                <div class="input-group"><label>策略</label><select id="bt-strategy"><option value="bollinger">布林带均值回归</option><option value="rsi">RSI超买超卖</option><option value="macd">MACD金叉死叉</option><option value="trend">EMA趋势跟踪</option><option value="rbf">区间假突破RBF</option><option value="combo">综合多策略</option></select></div>
+                <div class="input-group"><label>策略</label><select id="bt-strategy"><option value="bollinger">布林带均值回归</option><option value="rsi">RSI超买超卖</option><option value="macd">MACD金叉死叉</option><option value="trend">EMA趋势跟踪</option><option value="rbf">区间假突破RBF</option><option value="combo">综合多策略</option><option value="combo_whale">综合+巨鲸共振</option></select></div>
                 <div class="input-group"><label>时间框架</label><select id="bt-timeframe"><option value="15m">15m</option><option value="1h" selected>1h</option><option value="4h">4h</option><option value="1d">日线</option></select></div>
               </div>
               <div class="form-row">
@@ -374,6 +374,24 @@
               <div style="margin-top:12px;font-size:10px;color:var(--fg2)" id="ex-registered-title" hidden>📋 已登记账户:</div>
               <div id="ex-registered-list" style="margin-top:4px;font-size:10px"></div>
              <div id="ex-status" style="margin-top:12px;font-size:11px"></div>
+             <div id="balance-display" style="margin-top:8px;padding:8px;background:var(--bg3);border-radius:6px;font-size:12px">
+               <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+                 <span style="color:var(--fg2);font-size:11px;font-weight:500">💼 OKX 账户</span>
+                 <button class="btn btn-sm" onclick="fetchBalance()" style="font-size:9px;padding:2px 8px">🔄</button>
+               </div>
+               <div style="display:flex;justify-content:space-between">
+                 <span style="color:var(--fg2)">可用余额</span>
+                 <span id="bal-equity" style="font-weight:600;font-family:monospace">—</span>
+               </div>
+               <div style="display:flex;justify-content:space-between;margin-top:2px">
+                 <span style="color:var(--fg2)">未实现盈亏</span>
+                 <span id="bal-upl" style="font-weight:600;font-family:monospace">—</span>
+               </div>
+               <div style="display:flex;justify-content:space-between;margin-top:2px">
+                 <span style="color:var(--fg2);font-size:10px">保证金</span>
+                 <span id="bal-margin" style="font-weight:600;font-family:monospace;font-size:10px">—</span>
+               </div>
+             </div>
             </div>
           </div>
           <div>
@@ -385,7 +403,7 @@
               <div class="checkbox-row" style="margin-bottom:8px"><input type="checkbox" id="auto-macd"><label>MACD金叉死叉</label></div>
               <div class="checkbox-row" style="margin-bottom:8px"><input type="checkbox" id="auto-trend"><label>EMA趋势跟踪</label></div>
              <div class="checkbox-row" style="margin-bottom:8px"><input type="checkbox" id="auto-rbf"><label>RBF假突破</label></div>
-             <div class="checkbox-row" style="margin-bottom:8px"><input type="checkbox" id="auto-combo"><label>综合多策略</label></div>
+             <div class="checkbox-row" style="margin-bottom:8px"><input type="checkbox" id="auto-combo"><label>综合+巨鲸共振 <span style="color:var(--fg2);font-size:10px">(综合+鲸鱼共振)</span></label></div>
               <div class="checkbox-row" style="margin-bottom:8px"><input type="checkbox" id="auto-whale"><label>巨鲸追踪</label></div>
               <div style="margin:8px 0"><button class="btn btn-sm primary" onclick="pushTradeConfig(document.getElementById('auto-enable').checked)">💾 保存自动交易配置</button></div>
              <div id="auto-status" style="font-size:12px;margin:12px 0"></div>
@@ -425,6 +443,7 @@ const DEFAULT_STRATEGIES = {
   trend: { name:'EMA趋势跟踪', desc:'EMA50/200金叉做多，死叉做空。价格在EMA50上方仅做多。中线趋势核心。', timeframe:'4h', emaFast:50, emaSlow:200, enabled:true, direction:'both', params:{pullbackOnly:true, pullbackPct:0.02, atrMultiplier:2} },
   rbf: { name:'区间假突破RBF', desc:'极端市场中假突破后回归区间。识别20K线区间，突破后快速反向回归触发。高波动合约专用。', timeframe:'1h', rangePeriod:20, enabled:true, direction:'both', params:{breakoutPct:0.015, reversalBars:2, volumeConfirm:true, fearGreedFilter:true} },
   combo: { name:'综合多策略', desc:'布林带+RSI+MACD ≥2策略同向触发。巨鲸方向共振增强置信度。', timeframe:'1h', enabled:true, direction:'both', params:{minConfirm:2, strategies:['bollinger','rsi','macd'], requireStrength:true} },
+  combo_whale: { name:'综合+巨鲸共振', desc:'综合多策略+巨鲸方向一致时才触发。信号更可靠，回测验证后可用于自动交易。自动交易仅在此信号时下单。', timeframe:'1h+实时', enabled:false, direction:'both', params:{minConfirm:2, whaleBiasRequired:true} },
   whale: { name:'巨鲸追踪', desc:'分档监控OKX订单簿买卖盘深度。BTC/ETH高门槛(买盘4x/卖盘0.25x)，SOL/BNB中档(3.2x/0.3x)，DOGE/ARB低档(2.8x/0.35x)。需大单墙确认。', timeframe:'实时', enabled:true, direction:'both', params:{tieredThresholds:true, whaleWallMult:4} }
 };
 
@@ -573,7 +592,28 @@ function detectRBFSignals(data, period=20) {
   }
   return signals;
 }
-function detectComboSignals(data) {
+function simulateWhaleBias(data) {
+  // Simulate whale direction from price data: check recent momentum as a proxy
+  // Uses volume-weighted price change over last 12 bars to estimate whale sentiment
+  if (!data || data.length < 24) return 0;
+  const i=data.length-1;
+  const p12=data[i].close, p0=data[i-12].close;
+  const volSum=data.slice(i-12,i+1).reduce((s,c)=>s+(c.volume||50),0);
+  const volAvg=volSum/13;
+  // Strong momentum with high volume = simulated whale direction
+  const priceChg=(p12-p0)/p0*100;
+  // Use RSI at current bar as secondary signal
+  const rsiVals=calcRSI(data);
+  const rv=rsiVals[i]||50;
+  if (priceChg>2.5 && volAvg>60 && rv>55) return 1;   // bullish whale
+  if (priceChg<-2.5 && volAvg>60 && rv<45) return -1;  // bearish whale
+  // Weaker signal from RSI alone
+  if (rv<30) return 1;     // oversold = whales buying
+  if (rv>70) return -1;    // overbought = whales selling
+  return 0;
+}
+
+function detectComboSignals(data, whaleBiasOverride) {
   const bb=calcBollinger(data),rsi=calcRSI(data),macd=calcMACD(data),signals=[];
   const i=data.length-1,p=data[i].close;
   let b=0,r=0,m=0;
@@ -582,15 +622,44 @@ function detectComboSignals(data) {
   if(macd.histogram[i]&&macd.histogram[i-1]&&macd.histogram[i]>0&&macd.histogram[i]>macd.histogram[i-1])m=1;
   else if(macd.histogram[i]&&macd.histogram[i-1]&&macd.histogram[i]<0&&macd.histogram[i]<macd.histogram[i-1])m=-1;
   const t=b+r+m;
+
+  // Generate 综合多策略 signal
   if(t>=2)signals.push({type:'LONG',strategy:'综合多策略',strength:55+Math.abs(t)*20,price:p,time:data[i].time,detail:`${t}策略共振做多 B:${b} R:${r} M:${m}`});
   if(t<=-2)signals.push({type:'SHORT',strategy:'综合多策略',strength:55+Math.abs(t)*20,price:p,time:data[i].time,detail:`${Math.abs(t)}策略共振做空 B:${b} R:${r} M:${m}`});
-  // Whale tracking signal (based on priceData whaleDir)
-  var pd2 = priceData[coin];
-  var wdStr = pd2 && pd2.whaleDir;
-  if (wdStr && wdStr !== '—') {
-    var wtype = (wdStr.indexOf('买')>=0 || wdStr.indexOf('🐳')>=0) ? 'LONG' : (wdStr.indexOf('卖')>=0 || wdStr.indexOf('🐻')>=0) ? 'SHORT' : null;
-    var wstrength = wtype === 'LONG' ? (wdStr.indexOf('🐳')>=0 ? 80 : 60) : (wtype === 'SHORT' ? (wdStr.indexOf('🐻')>=0 ? 80 : 60) : 50);
-    if (wtype) signals.push({type:wtype,strategy:'巨鲸追踪',strength:wstrength,price:p,time:data[i].time,detail:wdStr});
+
+  // Determine whale bias: use override (backtest) or live priceData (dashboard)
+  var whaleBias = 0;
+  if (whaleBiasOverride !== undefined) {
+    whaleBias = whaleBiasOverride;
+  } else if (typeof coin !== 'undefined') {
+    var pd2 = priceData[coin];
+    var wdStr = pd2 && pd2.whaleDir;
+    if (wdStr && wdStr !== '—') {
+      whaleBias = (wdStr.indexOf('买')>=0 || wdStr.indexOf('🐳')>=0) ? 1 :
+                  (wdStr.indexOf('卖')>=0 || wdStr.indexOf('🐻')>=0) ? -1 : 0;
+    }
+  }
+
+  // Promote combo signals to 综合+巨鲸共振 when whale bias agrees
+  for (var si=0;si<signals.length;si++) {
+    var s=signals[si];
+    if (s.strategy === '综合多策略') {
+      if ((s.type==='LONG' && whaleBias===1) || (s.type==='SHORT' && whaleBias===-1)) {
+        s.strategy = '综合+巨鲸共振';
+        s.strength = Math.min(100, s.strength+20);
+        s.detail += ' +🐳共鸣';
+      } else if ((s.type==='LONG' && whaleBias===-1) || (s.type==='SHORT' && whaleBias===1)) {
+        s.strength = Math.max(20, s.strength-15);
+        s.detail += ' ⚠️鲸鱼反向';
+      }
+    }
+  }
+
+  // Standalone whale tracking signal (from live orderbook or simulated bias)
+  if (whaleBias !== 0) {
+    var wtype = whaleBias===1 ? 'LONG' : 'SHORT';
+    var wstrength = whaleBias===1 ? 75 : 75;
+    signals.push({type:wtype,strategy:'巨鲸追踪',strength:wstrength,price:p,time:data[i].time,detail:whaleBias===1?'🐳买盘优势(模拟)':'🐻卖盘优势(模拟)'});
   }
   return signals;
 }
@@ -654,6 +723,38 @@ var _proxyBase = (function() {
 })();
 var _tickerInterval = null;
 var _tickerFailures = 0;
+var pollPriceData = null;
+
+function pollPriceDataFn() {
+  fetch(_proxyBase + '/api/priceData')
+    .then(function(r){return r.json()})
+    .then(function(d){
+      if (d && Object.keys(d).length > 0) {
+        priceData = d;
+        updateMarketCards();
+        updateCoinTable();
+      }
+    })
+    .catch(function(){});
+}
+
+function updateConnectionStatus(connected) {
+  var dot = document.getElementById('conn-dot');
+  var txt = document.getElementById('conn-text');
+  var label = document.getElementById('ws-label');
+  var indicator = document.getElementById('ws-indicator');
+  if (connected) {
+    dot.className = 'status-dot online';
+    txt.textContent = '🟢 实时';
+    label.textContent = 'SSE 已连接';
+    if (indicator) indicator.className = 'live-dot green';
+  } else {
+    dot.className = 'status-dot';
+    txt.textContent = '⛔ 离线';
+    label.textContent = '断开';
+    if (indicator) indicator.className = 'live-dot';
+  }
+}
 
 function startLocalPolling() {
   // Ping proxy to verify it's running, then start polling
@@ -672,7 +773,8 @@ function startLocalPolling() {
         document.getElementById('data-source-badge').innerHTML = '<span class="live-dot green"></span>OKX 实时';
         _fetchAllHistoricalData();
         pollTickers();
-        _tickerInterval = setInterval(pollTickers, 30000);
+        _tickerInterval = setInterval(pollTickers, 5000);
+        pollPriceData = setInterval(pollPriceDataFn, 5000);
       } else {
         throw new Error('proxy not ready');
       }
@@ -1514,20 +1616,53 @@ function runBacktest() {
     case 'macd':signals=detectMACDSignals(data,macd);break;
     case 'trend':signals=detectTrendSignals(data,ema50,ema200);break;
     case 'rbf':signals=detectRBFSignals(data,20);break;
-    case 'combo':for(let i=60;i<data.length;i++)signals.push(...detectComboSignals(data.slice(0,i+1)));signals.sort((a,b)=>a.time-b.time);break;
+    case 'combo':
+      for(let i=60;i<data.length;i++){
+        var slice=data.slice(0,i+1);
+        var wb=simulateWhaleBias(slice);
+        var cs=detectComboSignals(slice,wb);
+        // Enrich with SL/TP immediately
+        cs.forEach(function(c){if(!c.sltp){var st=computeSLTP(c.price,c.type,slice);if(st)c.sltp=st;}});
+        signals.push(...cs);
+      }
+      signals.sort((a,b)=>a.time-b.time);
+      // Filter: keep all combo-relevant signals
+      signals=signals.filter(function(s){return s.strategy==='综合+巨鲸共振'||s.strategy==='综合多策略'||s.strategy==='巨鲸追踪'});
+      break;
+    case 'combo_whale':
+      for(let i=60;i<data.length;i++){
+        var slice=data.slice(0,i+1);
+        var wb=simulateWhaleBias(slice);
+        var cs=detectComboSignals(slice,wb);
+        cs.forEach(function(c){if(!c.sltp){var st=computeSLTP(c.price,c.type,slice);if(st)c.sltp=st;}});
+        signals.push(...cs);
+      }
+      signals.sort((a,b)=>a.time-b.time);
+      // Filter: only 综合+巨鲸共振 for resonance backtest
+      signals=signals.filter(function(s){return s.strategy==='综合+巨鲸共振'});
+      break;
   }
   const trades=[];
   let equity=capital,peak=capital,maxDD=0,wins=0,losses=0;
   for(const sig of signals){
+    if(!sig.sltp){continue;}
     const sigIdx=data.findIndex(d=>d.time===sig.time);
     if(sigIdx<0||sigIdx>=data.length-5)continue;
-    const holdBars=Math.floor(6+Math.random()*18);
-    const exitIdx=Math.min(sigIdx+holdBars,data.length-1);
-    const exitCandles=data.slice(sigIdx+1,exitIdx+1);
+    const slLevel=sig.sltp.sl,tp1Level=sig.sltp.tp1,tp2Level=sig.sltp.tp2,tp3Level=sig.sltp.tp3;
+    const exitCandles=data.slice(sigIdx+1);
     let exitPrice,exitReason;
     for(const c of exitCandles){
-      if(sig.type==='LONG'&&c.low<=sig.price*(1-slPct)){exitPrice=sig.price*(1-slPct);exitReason='止损';break}
-      if(sig.type==='SHORT'&&c.high>=sig.price*(1+slPct)){exitPrice=sig.price*(1+slPct);exitReason='止损';break}
+      if(sig.type==='LONG'){
+        if(c.low<=slLevel){exitPrice=slLevel;exitReason='止损';break}
+        if(c.high>=tp3Level){exitPrice=tp3Level;exitReason='TP3';break}
+        if(c.high>=tp2Level){exitPrice=tp2Level;exitReason='TP2';break}
+        if(c.high>=tp1Level){exitPrice=tp1Level;exitReason='TP1';break}
+      } else {
+        if(c.high>=slLevel){exitPrice=slLevel;exitReason='止损';break}
+        if(c.low<=tp3Level){exitPrice=tp3Level;exitReason='TP3';break}
+        if(c.low<=tp2Level){exitPrice=tp2Level;exitReason='TP2';break}
+        if(c.low<=tp1Level){exitPrice=tp1Level;exitReason='TP1';break}
+      }
     }
     if(!exitPrice){exitPrice=exitCandles[exitCandles.length-1].close;exitReason='收盘'}
     let pnlPct;if(sig.type==='LONG')pnlPct=((exitPrice-sig.price)/sig.price)*leverage;else pnlPct=((sig.price-exitPrice)/sig.price)*leverage;
@@ -1593,7 +1728,9 @@ function connectExchange(){
     exchangeConfig.connected=true;
     localStorage.setItem('contract_exchange_config',JSON.stringify({...exchangeConfig,secret:'***HIDDEN***'}));
     localStorage.setItem('contract_exchange_secret',JSON.stringify({exchange:ex,apiKey,secret,passphrase}));
-    document.getElementById('ex-status').innerHTML=`<div style="color:var(--green)">✅ 配置已保存 · ${ex.toUpperCase()}</div><div style="color:var(--fg2);margin-top:4px;font-size:10px">⚠️ 浏览器CORS限制。生产环境部署后端代理。</div>`;
+    document.getElementById('ex-status').innerHTML=`<div style="color:var(--green)">✅ 配置已保存 · ${ex.toUpperCase()}</div>`;
+    // Auto-fetch balance
+    setTimeout(fetchBalance, 500);
     // Reconnect via local proxy
     if (_tickerInterval) { clearInterval(_tickerInterval); _tickerInterval = null; }
     wsConnected = false;
@@ -1627,11 +1764,35 @@ function saveApiConfig(){
 }
 function disconnectExchange(){
   exchangeConfig=null;localStorage.removeItem('contract_exchange_config');localStorage.removeItem('contract_exchange_secret');
-  document.getElementById('ex-status').innerHTML='<span style="color:var(--fg2)">已断开</span>';
-  toast('info','已断开');
+  document.getElementById('ex-status').innerHTML='<span style="color:var(--fg2)">⏸ 已断开</span>';
+  document.getElementById('bal-equity').textContent='—';document.getElementById('bal-upl').textContent='—';document.getElementById('bal-margin').textContent='—';
+  document.getElementById('ex-apikey').value='';document.getElementById('ex-secret').value='';document.getElementById('ex-passphrase').value='';
+  toast('info','已断开交易所连接');
+}
+function fetchBalance(){
+  var apiBase = window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost'
+    ? window.location.protocol + '//' + window.location.host
+    : window.location.protocol + '//' + window.location.host;
+  document.getElementById('bal-equity').textContent='加载中...';
+  fetch(apiBase + '/api/okx/balance')
+    .then(function(r){return r.json()})
+    .then(function(d){
+      if(d.ok){
+        document.getElementById('bal-equity').textContent=d.availEq.toFixed(2)+' USDT';
+        document.getElementById('bal-upl').innerHTML=(d.unrealized>=0?'<span style="color:var(--green)">+':'<span style="color:var(--red)">')+d.unrealized.toFixed(2)+'</span>';
+        document.getElementById('bal-margin').textContent=d.margin.toFixed(2)+' USDT';
+      } else {
+        document.getElementById('bal-equity').textContent='❌';
+        document.getElementById('bal-upl').textContent=d.error||'未知错误';
+        document.getElementById('bal-margin').textContent='';
+      }
+    })
+    .catch(function(){document.getElementById('bal-equity').textContent='❌';
+      document.getElementById('bal-upl').textContent='网络错误';
+      document.getElementById('bal-margin').textContent='';});
 }
 function updateExchangeHint(){
-  const hints={binance:'⚠️ Binance Futures 需要开通合约账户。API权限: Enable Futures。',okx:'⚠️ OKX API v5。Passphrase必填。权限: Trade。',bybit:'⚠️ Bybit API v5。权限: Contract→Orders+Positions。'};
+  const hints={binance:'⚠️ 需要开通合约账户。API权限: Enable Futures。',okx:'⚠️ OKX API v5。Passphrase必填。权限: Trade。',bybit:'⚠️ Bybit API v5。权限: Contract→Orders+Positions。'};
   document.getElementById('ex-hint').textContent=hints[document.getElementById('ex-exchange').value]||'';
 }
 function toggleAutoTrade(){
@@ -1708,6 +1869,8 @@ function checkLoginState(){
       guard.style.display='none'; panel.style.display='block';
       document.getElementById('ex-email').value=session.email;
       loadExchangeConfig();
+      fetchAccountsFromServer(session.email);
+      loadAutoTradeStatus();
     }
   }
 }
@@ -1758,9 +1921,20 @@ function fetchAccountsFromServer(email){
     .then(function(r){return r.json()}).then(function(d){
       if(d.ok&&d.account&&Object.keys(d.account).length>0){
         var accounts=JSON.parse(localStorage.getItem('contract_registered_accounts')||'{}');
-        // Merge server accounts into localStorage
         accounts[email]=d.account;
         localStorage.setItem('contract_registered_accounts',JSON.stringify(accounts));
+        // Populate form fields from server
+        var a=d.account;
+        document.getElementById('ex-exchange').value=a.exchange||'okx';
+        document.getElementById('ex-apikey').value=a.apiKey||'';
+        document.getElementById('ex-secret').value=a.secret||'';
+        document.getElementById('ex-passphrase').value=a.passphrase||'';
+        document.getElementById('ex-leverage').value=a.leverage||5;
+        document.getElementById('ex-position-size').value=a.posSize||10;
+        exchangeConfig={exchange:a.exchange,apiKey:a.apiKey,secret:a.secret,passphrase:a.passphrase,connected:false,email:email};
+        localStorage.setItem('contract_exchange_secret',JSON.stringify({exchange:a.exchange,apiKey:a.apiKey,secret:a.secret,passphrase:a.passphrase}));
+        updateExchangeHint();
+        document.getElementById('ex-status').innerHTML='<span style="color:var(--green)">✅ 已从服务器加载API配置</span>';
       }
       renderRegisteredList();
     }).catch(function(){renderRegisteredList();});
@@ -1856,7 +2030,7 @@ function loadExchangeConfig(){
     const cfg=JSON.parse(localStorage.getItem('contract_exchange_config')||'null');
     const secret=JSON.parse(localStorage.getItem('contract_exchange_secret')||'null');
     const ts=JSON.parse(localStorage.getItem('contract_trade_settings')||'null');
-    if(cfg){document.getElementById('ex-exchange').value=cfg.exchange||'okx';document.getElementById('ex-apikey').value=secret?.apiKey||'';document.getElementById('ex-secret').value=secret?.secret||'';document.getElementById('ex-passphrase').value=secret?.passphrase||'';if(ts){document.getElementById('ex-leverage').value=ts.leverage||5;document.getElementById('ex-position-size').value=ts.posSize||10;document.getElementById('auto-enable').checked=ts.autoTrade||false;toggleAutoTrade()}updateExchangeHint();exchangeConfig={...cfg,secret:secret?.secret,passphrase:secret?.passphrase,connected:false};document.getElementById('ex-status').innerHTML='<span style="color:var(--fg2)">📋 已加载配置 · 请点连接测试</span>'}
+    if(cfg){document.getElementById('ex-exchange').value=cfg.exchange||'okx';document.getElementById('ex-apikey').value=secret?.apiKey||'';document.getElementById('ex-secret').value=secret?.secret||'';document.getElementById('ex-passphrase').value=secret?.passphrase||'';if(ts){document.getElementById('ex-leverage').value=ts.leverage||5;document.getElementById('ex-position-size').value=ts.posSize||10;document.getElementById('auto-enable').checked=ts.autoTrade||false}updateExchangeHint();exchangeConfig={...cfg,secret:secret?.secret,passphrase:secret?.passphrase,connected:false};document.getElementById('ex-status').innerHTML='<span style="color:var(--fg2)">📋 已加载配置 · 请点连接测试</span>'}
     renderRegisteredList();
   }catch(e){}
 }
@@ -2032,7 +2206,9 @@ function init(){
   loadStrategies();
   loadExchangeConfig();
   updateExchangeHint();
-  toggleAutoTrade();
+  // Restore auto-trade state + API keys from server
+  checkLoginState();
+  loadAutoTradeStatus();
 
   document.getElementById('panel-title').textContent = '📊 仪表盘 · 加载中...';
   document.getElementById('data-source-badge').innerHTML = '<span class="live-dot gold"></span>加载中';
@@ -2249,6 +2425,8 @@ function connectSSE(apiBase) {
           });
         }
         updateMarketCards(); updateCoinTable(); updateLatestSignals(); drawPriceChart();
+        // Sync auto-trade state from server (cross-device consistency)
+        loadAutoTradeStatus();
       } else if (msg.type === 'signal') {
         var s = msg.data;
         var key = s.coin + '_' + s.strategy + '_' + s.type + '_' + (s.time||0);
@@ -2260,6 +2438,18 @@ function connectSSE(apiBase) {
           updateMarketCards(); updateCoinTable(); updateLatestSignals();
           if (document.getElementById('sltp').classList.contains('active')) updateSLTPSummary();
         }
+      } else if (msg.type === 'market_update') {
+        // Fast real-time update (every 5s) — update priceData + signalLog + dashboard
+        if (msg.priceData) {
+          priceData = msg.priceData;
+          updateMarketCards();
+          updateCoinTable();
+        }
+        if (msg.signalLog && msg.signalLog.length > 0) {
+          signalLog = msg.signalLog;
+          updateLatestSignals();
+        }
+        updateConnectionStatus(true);
       }
     } catch(e) {}
   };
